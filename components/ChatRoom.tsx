@@ -50,6 +50,11 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
     getCurrentTransport
   } = usePusherContext();
 
+  // 현재 사용자를 제외한 다른 사용자들만 필터링
+  const otherUsers = onlineUsers.filter(user => user.id !== currentUser.id);
+  // 전체 사용자 수 (자신 + 다른 사용자들)
+  const totalUserCount = otherUsers.length + 1;
+
   // 메시지 상태 디버깅
   useEffect(() => {
     console.log('📝 Messages updated:', messages);
@@ -345,12 +350,12 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
             <button
               onClick={toggleSidebar}
               className="fixed top-20 left-4 z-30 p-3 bg-gradient-to-r from-pink-400 to-purple-500 text-white rounded-full shadow-2xl hover:from-pink-500 hover:to-purple-600 transition-all duration-300 transform hover:scale-110 animate-pulse active:scale-95 focus:ring-4 focus:ring-pink-300"
-              aria-label={`친구 목록 열기 (총 ${onlineUsers.length + 1}명 온라인)`}
+              aria-label={`친구 목록 열기 (총 ${totalUserCount}명 온라인)`}
             >
               <div className="flex items-center space-x-1">
                 <span className="text-lg">👥</span>
                 <span className="text-xs font-bold bg-white/20 rounded-full px-1.5 py-0.5">
-                  {onlineUsers.length + 1}
+                  {totalUserCount}
                 </span>
               </div>
             </button>
@@ -438,8 +443,8 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
             </div>
             <div className="mt-3 bg-gradient-to-r from-pink-200 to-purple-200 rounded-2xl p-2">
               <p className="font-bold text-purple-700 text-sm">
-                🎉 총 {onlineUsers.length + 1}명이 함께해요! 
-                {onlineUsers.length > 0 ? `(친구 ${onlineUsers.length}명 + 나)` : '(나 혼자)'} 🎉
+                🎉 총 {totalUserCount}명이 함께해요! 
+                {otherUsers.length > 0 ? `(친구 ${otherUsers.length}명 + 나)` : '(나 혼자)'} 🎉
               </p>
             </div>
           </div>
@@ -486,7 +491,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
           </div>
 
           {/* 다른 접속자들 */}
-          {onlineUsers.map((user, index) => (
+          {otherUsers.map((user, index) => (
             <div 
               key={user.id} 
               className="flex items-center space-x-3 p-3 bg-gradient-to-r from-pink-100 to-purple-100 rounded-2xl border-2 border-pink-200 shadow-md transform hover:scale-105 transition-all duration-200 hover:shadow-lg"
@@ -520,7 +525,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
             </div>
           ))}
 
-          {onlineUsers.length === 0 && (
+          {otherUsers.length === 0 && (
             <div className="text-center py-6 bg-gradient-to-r from-blue-100 to-purple-100 rounded-2xl border-2 border-dashed border-purple-300">
               <div className="text-4xl mb-2 animate-bounce">🌟</div>
               <p className="text-sm font-bold text-purple-700">나 혼자만 있어요!</p>
@@ -566,9 +571,9 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
               >
                 <div className="text-2xl relative">
                   🎈
-                  {onlineUsers.length > 0 && (
+                  {otherUsers.length > 0 && (
                     <div className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center">
-                      <span className="text-xs text-white font-bold">{onlineUsers.length}</span>
+                      <span className="text-xs text-white font-bold">{otherUsers.length}</span>
                     </div>
                   )}
                 </div>
@@ -598,7 +603,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
             <div className="md:hidden flex items-center space-x-1 bg-gradient-to-r from-yellow-200 to-pink-200 px-3 py-2 rounded-full border-2 border-pink-300 shadow-lg">
               <div className={`w-3 h-3 rounded-full ${connectionDisplay.color} animate-pulse`}></div>
               <span className="text-xs font-bold text-purple-700">
-                👥 {onlineUsers.length + 1}명 {onlineUsers.length > 0 ? `(+${onlineUsers.length})` : ''}
+                👥 {totalUserCount}명 {otherUsers.length > 0 ? `(+${otherUsers.length})` : ''}
               </span>
             </div>
           </div>
