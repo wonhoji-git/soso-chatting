@@ -16,7 +16,7 @@
   }
   
   .chat-bubble.sent {
-    @apply bg-cute-blue text-white ml-auto;
+    @apply bg-blue-400 text-white ml-auto;
   }
   
   .chat-bubble.received {
@@ -28,7 +28,7 @@
   }
   
   .avatar-selection.selected {
-    @apply ring-4 ring-cute-yellow ring-offset-2;
+    @apply ring-4 ring-yellow-400 ring-offset-2;
   }
 
   /* 연결 상태 표시 */

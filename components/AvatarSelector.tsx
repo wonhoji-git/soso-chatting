@@ -9,11 +9,11 @@ interface AvatarSelectorProps {
 }
 
 const avatars = [
-  { name: '고냠이', src: '/images/고냠이.jpg' },
-  { name: '코코', src: '/images/코코.jpg' },
-  { name: '뚱파', src: '/images/뚱파.jpg' },
-  { name: '파덕이', src: '/images/파덕이.jpg' },
-  { name: '햄톨이', src: '/images/햄톨이.jpg' },
+  { name: '고냠이', src: '/images/cat.jpg' },
+  { name: '코코', src: '/images/coco.jpg' },
+  { name: '뚱파', src: '/images/pig.jpg' },
+  { name: '파덕이', src: '/images/duck.jpg' },
+  { name: '햄톨이', src: '/images/hamster.jpg' },
 ];
 
 export default function AvatarSelector({ onAvatarSelect }: AvatarSelectorProps) {
