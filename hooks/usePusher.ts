@@ -24,7 +24,10 @@ export const usePusher = () => {
 
   // 중복 사용자 체크 함수
   const isUserAlreadyOnline = useCallback((userId: string) => {
-    return onlineUsers.some(user => user.id === userId);
+    const isOnline = onlineUsers.some(user => user.id === userId);
+    console.log(`🔍 Checking if user ${userId} is already online:`, isOnline);
+    console.log('👥 Current online users:', onlineUsers.map(u => ({ id: u.id, name: u.name })));
+    return isOnline;
   }, [onlineUsers]);
 
   // Pusher 연결 상태 확인
@@ -251,16 +254,57 @@ export const usePusher = () => {
 
       // 사용자 입장
       channel.bind('user-joined', (user: User) => {
-        logConnectionState('user_joined', `user ${user.name} joined`);
+        logConnectionState('user_joined', `user ${user.name} (${user.id}) joined`);
+        console.log('👋 User joined event:', user);
+        console.log('👥 Current online users before:', onlineUsers.map(u => ({ id: u.id, name: u.name })));
+        
         if (!isUserAlreadyOnline(user.id)) {
-          setOnlineUsers(prev => [...prev, user]);
+          console.log('✅ Adding new user to list');
+          setOnlineUsers(prev => {
+            const newList = [...prev, user];
+            console.log('👥 Updated online users:', newList.map(u => ({ id: u.id, name: u.name })));
+            return newList;
+          });
+          
+          // 입장 알림 메시지 추가
+          const joinMessage: Message = {
+            id: `join-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            text: `${user.name}님이 채팅방에 참여했습니다! 🎉`,
+            userId: 'system',
+            userName: 'System',
+            userAvatar: '',
+            timestamp: new Date().toISOString(),
+            isSystemMessage: true
+          };
+          setMessages(prev => [...prev, joinMessage]);
+        } else {
+          console.log('⚠️ User already online, skipping');
         }
       });
 
       // 사용자 퇴장
       channel.bind('user-left', (user: User) => {
-        logConnectionState('user_left', `user ${user.name} left`);
-        setOnlineUsers(prev => prev.filter(u => u.id !== user.id));
+        logConnectionState('user_left', `user ${user.name} (${user.id}) left`);
+        console.log('👋 User left event:', user);
+        console.log('👥 Current online users before:', onlineUsers.map(u => ({ id: u.id, name: u.name })));
+        
+        setOnlineUsers(prev => {
+          const newList = prev.filter(u => u.id !== user.id);
+          console.log('👥 Updated online users after removal:', newList.map(u => ({ id: u.id, name: u.name })));
+          return newList;
+        });
+        
+        // 퇴장 알림 메시지 추가
+        const leaveMessage: Message = {
+          id: `leave-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          text: `${user.name}님이 채팅방을 나갔습니다. 👋`,
+          userId: 'system',
+          userName: 'System',
+          userAvatar: '',
+          timestamp: new Date().toISOString(),
+          isSystemMessage: true
+        };
+        setMessages(prev => [...prev, leaveMessage]);
       });
 
         logConnectionState('initialize_complete', 'all event bindings and channel setup completed for new instance');
@@ -443,6 +487,14 @@ export const usePusher = () => {
         throw new Error('Channel not subscribed');
       }
 
+      // 현재 사용자를 로컬에서 제거 (재입장 시 중복 방지)
+      console.log('🔄 Joining chat - removing current user from local list first');
+      setOnlineUsers(prev => {
+        const filtered = prev.filter(u => u.id !== user.id);
+        console.log('👥 Local users after self-removal:', filtered.map(u => ({ id: u.id, name: u.name })));
+        return filtered;
+      });
+
       const response = await fetch('/api/pusher/user', {
         method: 'POST',
         headers: {
@@ -465,9 +517,12 @@ export const usePusher = () => {
 
   const leaveChat = async (user: User) => {
     try {
+      // 로컬 상태에서 즉시 제거
+      setOnlineUsers(prev => prev.filter(u => u.id !== user.id));
+      
       if (isDisconnectingRef.current || !isPusherConnected()) {
         const currentState = getConnectionState();
-        logConnectionState('leave_chat', `skipped - disconnecting: ${isDisconnectingRef.current}, connected: ${isPusherConnected()}, state: ${currentState}`);
+        logConnectionState('leave_chat', `skipped API call - disconnecting: ${isDisconnectingRef.current}, connected: ${isPusherConnected()}, state: ${currentState}`);
         return;
       }
 
@@ -480,7 +535,7 @@ export const usePusher = () => {
       });
 
       if (!response.ok) {
-        console.warn('Failed to leave chat via API, but continuing with cleanup');
+        console.warn('Failed to leave chat via API, but local state already updated');
       }
       
       logConnectionState('leave_chat', 'success');

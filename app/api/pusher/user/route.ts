@@ -28,6 +28,9 @@ try {
 const activeUsers = new Map<string, { user: any; joinedAt: Date }>();
 
 export async function POST(req: NextRequest) {
+  console.log('📡 User API called');
+  console.log('👥 Current active users count:', activeUsers.size);
+  console.log('👥 Active users list:', Array.from(activeUsers.entries()).map(([id, data]) => ({ id, name: data.user.name })));
   try {
     // Pusher 인스턴스 확인
     if (!pusher) {
@@ -62,24 +65,17 @@ export async function POST(req: NextRequest) {
         joinedAt: new Date()
       });
 
-      console.log(`User ${user.name} (${user.id}) joined chat`);
+      console.log(`✅ User ${user.name} (${user.id}) joined chat`);
+      console.log('👥 Active users after join:', activeUsers.size);
 
       // 사용자 입장 알림
-      await pusher.trigger('chat', 'user-joined', {
+      const joinedUser = {
         ...user,
         isOnline: true,
         joinedAt: new Date().toISOString(),
-      });
-      
-      // 시스템 메시지
-      await pusher.trigger('chat', 'new-message', {
-        id: `system-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        text: `${user.name}님이 채팅방에 입장했습니다! 🎉`,
-        userId: 'system',
-        userName: '시스템',
-        userAvatar: '/images/고냠이.jpg',
-        timestamp: new Date().toISOString(),
-      });
+      };
+      console.log('📡 Broadcasting user-joined event:', joinedUser);
+      await pusher.trigger('chat', 'user-joined', joinedUser);
     } else if (action === 'leave') {
       // 사용자가 실제로 활성 상태인지 확인
       if (!activeUsers.has(user.id)) {
@@ -93,24 +89,17 @@ export async function POST(req: NextRequest) {
       // 사용자를 활성 목록에서 제거
       activeUsers.delete(user.id);
 
-      console.log(`User ${user.name} (${user.id}) left chat`);
+      console.log(`✅ User ${user.name} (${user.id}) left chat`);
+      console.log('👥 Active users after leave:', activeUsers.size);
 
       // 사용자 퇴장 알림
-      await pusher.trigger('chat', 'user-left', {
+      const leftUser = {
         ...user,
         isOnline: false,
         leftAt: new Date().toISOString(),
-      });
-      
-      // 시스템 메시지
-      await pusher.trigger('chat', 'new-message', {
-        id: `system-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        text: `${user.name}님이 채팅방을 나갔습니다 👋`,
-        userId: 'system',
-        userName: '시스템',
-        userAvatar: '/images/고냠이.jpg',
-        timestamp: new Date().toISOString(),
-      });
+      };
+      console.log('📡 Broadcasting user-left event:', leftUser);
+      await pusher.trigger('chat', 'user-left', leftUser);
     } else {
       return NextResponse.json({ 
         error: 'Invalid action. Use "join" or "leave"' 

@@ -21,6 +21,7 @@ export interface Message {
   userName: string;
   userAvatar: string;
   timestamp: string; // ISO 문자열로 변경
+  isSystemMessage?: boolean; // 시스템 메시지 여부
 }
 
 // 채팅방 타입

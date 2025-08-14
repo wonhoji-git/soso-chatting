@@ -61,6 +61,16 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
     console.log('📊 Messages count:', messages.length);
   }, [messages]);
 
+  // 사용자 상태 디버깅
+  useEffect(() => {
+    console.log('👥 User state updated:');
+    console.log('  - Current user:', currentUser.id, currentUser.name);
+    console.log('  - Online users (raw):', onlineUsers.map(u => ({ id: u.id, name: u.name })));
+    console.log('  - Other users (filtered):', otherUsers.map(u => ({ id: u.id, name: u.name })));
+    console.log('  - Total count:', totalUserCount);
+    console.log('  - Other count:', otherUsers.length);
+  }, [onlineUsers, currentUser, otherUsers, totalUserCount]);
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -493,8 +503,8 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
           {/* 다른 접속자들 */}
           {otherUsers.map((user, index) => (
             <div 
-              key={user.id} 
-              className="flex items-center space-x-3 p-3 bg-gradient-to-r from-pink-100 to-purple-100 rounded-2xl border-2 border-pink-200 shadow-md transform hover:scale-105 transition-all duration-200 hover:shadow-lg"
+              key={`${user.id}-${user.joinedAt}`} 
+              className="flex items-center space-x-3 p-3 bg-gradient-to-r from-pink-100 to-purple-100 rounded-2xl border-2 border-pink-200 shadow-md transform hover:scale-105 transition-all duration-200 hover:shadow-lg animate-in slide-in-from-left"
               style={{animationDelay: `${index * 0.1}s`}}
             >
               <div className="relative">
@@ -632,13 +642,25 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
               </div>
             </div>
           )}
-          {messages.map((message) => (
-            <div
-              key={message.id}
-              className={`flex ${message.userId === currentUser.id ? 'justify-end' : 'justify-start'}`}
-            >
-              <div className={`flex items-end space-x-2 max-w-[85%] md:max-w-[70%] ${message.userId === currentUser.id ? 'flex-row-reverse space-x-reverse' : ''}`}>
-                {message.userId !== 'system' && (
+          {messages.map((message) => {
+            // 시스템 메시지인 경우 중앙 정렬로 표시
+            if (message.isSystemMessage || message.userId === 'system') {
+              return (
+                <div key={message.id} className="flex justify-center">
+                  <div className="bg-gradient-to-r from-purple-200 to-pink-200 text-purple-700 px-4 py-2 rounded-full text-sm font-medium border border-purple-300 shadow-sm max-w-xs text-center">
+                    {message.text}
+                  </div>
+                </div>
+              );
+            }
+
+            // 일반 메시지 표시
+            return (
+              <div
+                key={message.id}
+                className={`flex ${message.userId === currentUser.id ? 'justify-end' : 'justify-start'}`}
+              >
+                <div className={`flex items-end space-x-2 max-w-[85%] md:max-w-[70%] ${message.userId === currentUser.id ? 'flex-row-reverse space-x-reverse' : ''}`}>
                   <Image
                     src={message.userAvatar}
                     alt={message.userName}
@@ -646,17 +668,15 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
                     height={35}
                     className="rounded-full w-8 h-8 md:w-9 md:h-9 object-cover flex-shrink-0"
                   />
-                )}
-                <div className={`chat-bubble text-sm md:text-base ${message.userId === 'system' ? 'bg-cute-purple text-white mx-auto' : message.userId === currentUser.id ? 'sent' : 'received'}`}>
-                  {message.userId !== 'system' && (
+                  <div className={`chat-bubble text-sm md:text-base ${message.userId === currentUser.id ? 'sent' : 'received'}`}>
                     <p className="text-xs md:text-sm font-bold mb-1">{message.userName}</p>
-                  )}
-                  <p className="break-words">{message.text}</p>
-                  <p className="text-xs opacity-70 mt-1">{formatTime(message.timestamp)}</p>
+                    <p className="break-words">{message.text}</p>
+                    <p className="text-xs opacity-70 mt-1">{formatTime(message.timestamp)}</p>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           
           <div ref={messagesEndRef} />
         </div>
