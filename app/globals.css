@@ -1,0 +1,110 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    font-family: 'Comic Sans MS', cursive;
+    background: linear-gradient(135deg, #FFB6C1 0%, #87CEEB 100%);
+    min-height: 100vh;
+  }
+}
+
+@layer components {
+  .chat-bubble {
+    @apply rounded-2xl px-4 py-2 max-w-xs break-words;
+  }
+  
+  .chat-bubble.sent {
+    @apply bg-cute-blue text-white ml-auto;
+  }
+  
+  .chat-bubble.received {
+    @apply bg-white text-gray-800 mr-auto;
+  }
+  
+  .avatar-selection {
+    @apply cursor-pointer transition-transform duration-200 hover:scale-110;
+  }
+  
+  .avatar-selection.selected {
+    @apply ring-4 ring-cute-yellow ring-offset-2;
+  }
+
+  /* 연결 상태 표시 */
+  .connection-status {
+    @apply flex items-center space-x-2 p-2 rounded-lg;
+  }
+
+  .connection-status.connecting {
+    @apply bg-yellow-100 text-yellow-800;
+  }
+
+  .connection-status.connected {
+    @apply bg-green-100 text-green-800;
+  }
+
+  .connection-status.disconnected {
+    @apply bg-orange-100 text-orange-800;
+  }
+
+  .connection-status.failed {
+    @apply bg-red-100 text-red-800;
+  }
+
+  /* 재연결 알림 */
+  .reconnect-alert {
+    @apply fixed top-4 left-1/2 transform -translate-x-1/2 z-50;
+  }
+
+  .reconnect-alert-content {
+    @apply px-6 py-3 rounded-xl shadow-lg border-2;
+  }
+
+  /* 애니메이션 */
+  .animate-bounce-gentle {
+    animation: bounce-gentle 2s infinite;
+  }
+
+  @keyframes bounce-gentle {
+    0%, 100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-10px);
+    }
+  }
+
+  /* 모바일 사이드바 개선을 위한 애니메이션 */
+  @keyframes shimmer {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(100%);
+    }
+  }
+
+  .animate-shimmer {
+    animation: shimmer 2s infinite;
+  }
+
+  /* 스크롤바 스타일링 */
+  .overflow-y-auto::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .overflow-y-auto::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+  }
+
+  .overflow-y-auto::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 3px;
+  }
+
+  .overflow-y-auto::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.5);
+  }
+}
