@@ -92,5 +92,14 @@
   ],
   "file_handlers": [],
   "protocol_handlers": [],
-  "related_applications": []
+  "related_applications": [],
+  "permissions": [
+    "notifications"
+  ],
+  "gcm_sender_id": "103953800507",
+  "notification_permissions": {
+    "sound": true,
+    "vibrate": true,
+    "badge": true
+  }
 }

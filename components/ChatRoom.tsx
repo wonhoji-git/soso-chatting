@@ -64,6 +64,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
     startTyping,
     stopTyping,
     requestNotificationPermission,
+    showDesktopNotification,
     updateNotificationSettings
   } = usePusherContext();
 
@@ -75,10 +76,10 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
     trackPerformanceIssues: true
   });
 
-  // 현재 사용자를 제외한 다른 사용자들만 필터링
+  // 현재 사용자를 제외한 다른 사용자들만 필터링 (사이드바용)
   const otherUsers = onlineUsers.filter(user => user.id !== currentUser.id);
-  // 전체 사용자 수 (자신 + 다른 사용자들)
-  const totalUserCount = otherUsers.length + 1;
+  // 전체 사용자 수는 onlineUsers 길이 그대로 사용 (자신도 포함되어 있음)
+  const totalUserCount = onlineUsers.length;
 
   // 메시지 상태 디버깅
   useEffect(() => {
@@ -94,6 +95,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
     console.log('  - Other users (filtered):', otherUsers.map(u => ({ id: u.id, name: u.name })));
     console.log('  - Total count:', totalUserCount);
     console.log('  - Other count:', otherUsers.length);
+    console.log('  - Raw online count:', onlineUsers.length);
   }, [onlineUsers, currentUser, otherUsers, totalUserCount]);
 
   const scrollToBottom = useCallback((force = false) => {
@@ -303,6 +305,42 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
       setShowReconnectAlert(false);
     }
   }, [connectionStatus]);
+
+  // 새로운 사용자를 위한 알림 권한 자동 요청
+  useEffect(() => {
+    const checkAndRequestNotificationPermission = async () => {
+      // 이미 설정된 사용자는 스킵
+      const hasRequestedBefore = localStorage.getItem('notificationPermissionRequested');
+      if (hasRequestedBefore) {
+        return;
+      }
+
+      // 연결되고 채팅방에 입장한 후 3초 뒤에 알림 권한 요청
+      if (isConnected && hasJoinedRef.current) {
+        setTimeout(async () => {
+          try {
+            console.log('🔔 자동으로 알림 권한 요청 시작...');
+            const granted = await requestNotificationPermission();
+            
+            // 권한 요청 완료 표시 (결과에 관계없이)
+            localStorage.setItem('notificationPermissionRequested', 'true');
+            
+            if (granted) {
+              console.log('✅ 알림 권한이 자동으로 허용되었습니다!');
+              // 환영 알림은 제거 - 채팅 중에는 불필요
+            } else {
+              console.log('⚠️ 알림 권한이 거부되었거나 지원되지 않습니다. 수동으로 설정할 수 있습니다.');
+            }
+          } catch (error) {
+            console.error('❌ 자동 알림 권한 요청 실패:', error);
+            localStorage.setItem('notificationPermissionRequested', 'true');
+          }
+        }, 3000);
+      }
+    };
+
+    checkAndRequestNotificationPermission();
+  }, [isConnected, requestNotificationPermission, notificationSettings.desktop]);
 
   // 컴포넌트 언마운트 시 정리 작업
   useEffect(() => {
@@ -729,14 +767,9 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
                 top: 'max(5rem, calc(env(safe-area-inset-top) + 1rem))',
                 left: 'max(1rem, env(safe-area-inset-left))'
               }}
-              aria-label={`친구 목록 열기 (총 ${totalUserCount}명 온라인)`}
+              aria-label="친구 목록 열기"
             >
-              <div className="flex items-center space-x-1">
-                <span className="text-lg">👥</span>
-                <span className="text-xs font-bold bg-white/20 rounded-full px-1.5 py-0.5">
-                  {totalUserCount}
-                </span>
-              </div>
+              <span className="text-lg">👥</span>
             </button>
 
             {/* 사이드 엣지 스와이프 인디케이터 */}
@@ -834,7 +867,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
             <div className="mt-3 bg-gradient-to-r from-pink-200 to-purple-200 rounded-2xl p-2 lg:p-3">
               <p className="font-bold text-purple-700 text-sm lg:text-base">
                 🎉 총 {totalUserCount}명이 함께해요! 
-                {otherUsers.length > 0 ? `(친구 ${otherUsers.length}명 + 나)` : '(나 혼자)'} 🎉
+                {totalUserCount === 1 ? '(나 혼자)' : `(친구 ${otherUsers.length}명 + 나)`} 🎉
               </p>
             </div>
           </div>
@@ -948,10 +981,10 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
       </div>
 
       {/* 메인 채팅 영역 - 반응형 개선 */}
-      <div className="flex-1 flex flex-col min-w-0 lg:max-w-none lg:h-full">
+      <div className="flex-1 flex flex-col min-w-0 lg:max-w-none lg:h-full overflow-hidden">
         {/* 헤더 */}
         <div 
-          className="bg-gradient-to-r from-pink-100 via-purple-100 to-blue-100 backdrop-blur-sm p-3 md:p-4 lg:p-6 shadow-xl border-b-4 border-pink-300 relative"
+          className="flex-shrink-0 bg-gradient-to-r from-pink-100 via-purple-100 to-blue-100 backdrop-blur-sm p-3 md:p-4 lg:p-6 shadow-xl border-b-4 border-pink-300 relative"
           style={{
             paddingTop: 'max(0.75rem, env(safe-area-inset-top))',
             paddingLeft: 'max(0.75rem, env(safe-area-inset-left))',
@@ -967,13 +1000,8 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
                 className="md:hidden mobile-touch-target p-3 text-pink-600 hover:text-pink-800 rounded-2xl hover:bg-pink-200 transition-all transform hover:scale-110 active:scale-95 focus:ring-4 focus:ring-pink-300 relative"
                 aria-label={showSidebar ? '친구 목록 닫기' : '친구 목록 열기'}
               >
-                <div className="text-2xl relative">
+                <div className="text-2xl">
                   🎈
-                  {otherUsers.length > 0 && (
-                    <div className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center">
-                      <span className="text-xs text-white font-bold">{otherUsers.length}</span>
-                    </div>
-                  )}
                 </div>
               </button>
               
@@ -1004,15 +1032,6 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
                 onUpdateSettings={updateNotificationSettings}
                 onRequestPermission={requestNotificationPermission}
               />
-              
-              {/* 접속자 수 표시 (모바일용) */}
-              <div className="md:hidden flex items-center space-x-1 bg-gradient-to-r from-yellow-200 to-pink-200 px-3 py-2 rounded-full border-2 border-pink-300 shadow-lg">
-                <span className="text-xs mr-1">{connectionDisplay.icon}</span>
-                <div className={`w-3 h-3 rounded-full ${connectionDisplay.color} animate-pulse`}></div>
-                <span className="text-xs font-bold text-purple-700">
-                  👥 {totalUserCount}명 {otherUsers.length > 0 ? `(+${otherUsers.length})` : ''}
-                </span>
-              </div>
             </div>
           </div>
         </div>
@@ -1120,7 +1139,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
         {/* 이모지 선택기 */}
         {showEmojiPicker && (
           <div 
-            className="bg-gradient-to-r from-pink-100 to-purple-100 p-3 border-t-2 border-pink-300"
+            className="flex-shrink-0 bg-gradient-to-r from-pink-100 to-purple-100 p-3 border-t-2 border-pink-300"
             style={{
               paddingLeft: 'max(0.75rem, env(safe-area-inset-left))',
               paddingRight: 'max(0.75rem, env(safe-area-inset-right))'
@@ -1144,7 +1163,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
 
         {/* 스크롤 가이드 표시 */}
         {!isAtBottom && messages.length > 5 && (
-          <div className="scroll-guide bg-gradient-to-r from-blue-100 to-purple-100 p-3 text-center border-t-2 border-blue-200 shadow-inner">
+          <div className="flex-shrink-0 scroll-guide bg-gradient-to-r from-blue-100 to-purple-100 p-3 text-center border-t-2 border-blue-200 shadow-inner">
             <p className="text-sm text-purple-700 font-medium flex items-center justify-center space-x-2 mb-1">
               <span className="animate-bounce">📜</span>
               <span>기존 메시지를 보고 있습니다. 아래 버튼을 눌러 최신 메시지로 이동하세요.</span>
@@ -1158,7 +1177,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
         
         {/* 메시지 입력 - 반응형 개선 */}
         <div 
-          className="bg-gradient-to-r from-pink-100 via-purple-100 to-blue-100 p-3 md:p-4 lg:p-6 shadow-xl border-t-4 border-pink-300 mobile-input-area"
+          className="flex-shrink-0 bg-gradient-to-r from-pink-100 via-purple-100 to-blue-100 p-3 md:p-4 lg:p-6 shadow-xl border-t-4 border-pink-300 mobile-input-area"
           style={{
             paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))',
             paddingLeft: 'max(0.75rem, env(safe-area-inset-left))',

@@ -31,11 +31,11 @@ export const usePusher = () => {
       }
     }
     
-    // 기본값
+    // 기본값 - 모든 알림 활성화
     return {
-      sound: true,
-      desktop: true,
-      typing: true,
+      sound: true,      // 사운드 알림: 기본 활성화
+      desktop: true,    // 브라우저/PWA 알림: 기본 활성화  
+      typing: true,     // 타이핑 표시: 기본 활성화
     };
   });
 
@@ -501,6 +501,10 @@ export const usePusher = () => {
         console.log('👋 User joined event:', user);
         console.log('👥 Current online users before:', onlineUsers.map(u => ({ id: u.id, name: u.name })));
         
+        // 현재 사용자 본인의 입장 이벤트인지 확인
+        const isCurrentUser = user.id === currentUserRef.current?.id;
+        console.log('🔍 Is current user joining?', { isCurrentUser, userId: user.id, currentUserId: currentUserRef.current?.id });
+        
         if (!isUserAlreadyOnline(user.id)) {
           console.log('✅ Adding new user to list');
           setOnlineUsers(prev => {
@@ -509,19 +513,14 @@ export const usePusher = () => {
             return newList;
           });
           
-          // 입장 알림 메시지 추가
-          const joinMessage: Message = {
-            id: `join-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-            text: `${user.name}님이 채팅방에 참여했습니다! 🎉`,
-            userId: 'system',
-            userName: 'System',
-            userAvatar: '',
-            timestamp: new Date().toISOString(),
-            isSystemMessage: true
-          };
-          setMessages(prev => [...prev, joinMessage]);
+          // 입장 알림 메시지는 채팅창에 표시하지 않음 (사용자 목록으로만 알림)
+          console.log(`👋 ${user.name}님이 채팅방에 참여했습니다!`);
         } else {
-          console.log('⚠️ User already online, skipping');
+          console.log('⚠️ User already online, updating user data');
+          // 이미 있는 사용자의 데이터 업데이트
+          setOnlineUsers(prev => prev.map(existingUser => 
+            existingUser.id === user.id ? { ...existingUser, ...user } : existingUser
+          ));
         }
       });
 
@@ -537,17 +536,8 @@ export const usePusher = () => {
           return newList;
         });
         
-        // 퇴장 알림 메시지 추가
-        const leaveMessage: Message = {
-          id: `leave-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          text: `${user.name}님이 채팅방을 나갔습니다. 👋`,
-          userId: 'system',
-          userName: 'System',
-          userAvatar: '',
-          timestamp: new Date().toISOString(),
-          isSystemMessage: true
-        };
-        setMessages(prev => [...prev, leaveMessage]);
+        // 퇴장 알림 메시지는 채팅창에 표시하지 않음 (사용자 목록으로만 알림)
+        console.log(`👋 ${user.name}님이 채팅방을 나갔습니다.`);
       });
 
       // 타이핑 시작 이벤트
@@ -993,6 +983,19 @@ export const usePusher = () => {
         const errorData = await response.json();
         throw new Error(errorData.error || 'Failed to join chat');
       }
+
+      // 자신을 온라인 사용자 목록에 추가
+      console.log('✅ Adding current user to online users list');
+      setOnlineUsers(prev => {
+        // 중복 확인 후 추가
+        const isAlreadyInList = prev.some(u => u.id === user.id);
+        if (!isAlreadyInList) {
+          const newList = [...prev, user];
+          console.log('👥 Updated online users with current user:', newList.map(u => ({ id: u.id, name: u.name })));
+          return newList;
+        }
+        return prev;
+      });
       
       // 입장 후 서버와 동기화
       setTimeout(syncWithServer, 2000);
@@ -1066,18 +1069,30 @@ export const usePusher = () => {
     return result;
   }, []);
 
-  // 데스크톱 알림 표시 (안전한 유틸리티 사용)
+  // 데스크톱 알림 표시 (화면 비활성 상태에서만)
   const showDesktopNotification = useCallback((title: string, options?: NotificationOptions) => {
+    // Page Visibility API로 화면 상태 확인
+    const isPageVisible = typeof document !== 'undefined' ? !document.hidden : false;
+    const visibilityState = typeof document !== 'undefined' ? document.visibilityState : 'visible';
+    
     console.log('🔔 Attempting to show notification:', {
       title,
       desktopEnabled: notificationSettings.desktop,
       permission: getNotificationPermission(),
       isSupported: isNotificationSupported(),
+      isPageVisible,
+      visibilityState,
       options
     });
 
     if (!notificationSettings.desktop) {
       console.log('❌ 브라우저 알림이 비활성화되어 있습니다.');
+      return null;
+    }
+
+    // 화면이 활성 상태일 때는 알림 표시하지 않음 (채팅창에서 이미 메시지를 볼 수 있으므로)
+    if (isPageVisible && visibilityState === 'visible') {
+      console.log('⚠️ 화면이 활성 상태이므로 알림을 표시하지 않습니다.');
       return null;
     }
 

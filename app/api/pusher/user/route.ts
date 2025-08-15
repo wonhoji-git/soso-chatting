@@ -78,6 +78,16 @@ export async function POST(req: NextRequest) {
           ...existingUser,
           lastSeen: now
         });
+        
+        // 사용자 입장 알림 (이미 있는 경우에도)
+        const joinedUser = {
+          ...user,
+          isOnline: true,
+          joinedAt: existingUser.joinedAt.toISOString(),
+        };
+        console.log('📡 Broadcasting user-joined event for existing user:', joinedUser);
+        await pusher.trigger('chat', 'user-joined', joinedUser);
+        
         return NextResponse.json({ 
           success: true, 
           message: 'User already in chat, updated presence',

@@ -29,16 +29,45 @@ export const NotificationSettings = ({
   };
 
   const getPermissionStatusText = () => {
+    // 플랫폼별 환경 감지
+    const isIOSPWA = typeof window !== 'undefined' && (window.navigator as any).standalone === true;
+    const isIOSSafari = typeof window !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+    const isAndroid = typeof window !== 'undefined' && /Android/i.test(navigator.userAgent);
+    const isAndroidPWA = typeof window !== 'undefined' && (
+      window.matchMedia('(display-mode: standalone)').matches || 
+      window.matchMedia('(display-mode: fullscreen)').matches
+    );
+    
     switch (permissionStatus) {
       case 'granted':
+        if (isIOSPWA && isIOSSafari) {
+          return '🍎 iOS PWA 허용됨';
+        } else if (isAndroid && isAndroidPWA) {
+          return '🤖 Android PWA 허용됨';
+        }
         return '✅ 허용됨';
       case 'denied':
+        if (isIOSPWA && isIOSSafari) {
+          return '🍎 iOS PWA 차단됨';
+        } else if (isAndroid && isAndroidPWA) {
+          return '🤖 Android PWA 차단됨';
+        }
         return '❌ 차단됨';
       case 'default':
+        if (isIOSPWA && isIOSSafari) {
+          return '🍎 iOS PWA 미설정';
+        } else if (isAndroid && isAndroidPWA) {
+          return '🤖 Android PWA 미설정';
+        }
         return '❓ 미설정';
       case 'pwa-supported':
-        return '📱 PWA 지원';
+        return '📱 PWA 지원 가능';
       case 'partial':
+        if (isIOSPWA && isIOSSafari) {
+          return '🍎 iOS PWA 부분 지원';
+        } else if (isAndroid && isAndroidPWA) {
+          return '🤖 Android PWA 부분 지원';
+        }
         return '🔄 부분 지원';
       case 'unsupported':
         return '❌ 지원되지 않음';
@@ -358,6 +387,43 @@ export const NotificationSettings = ({
               <p>• 브라우저 알림: 새 메시지가 도착했을 때 브라우저/모바일 알림을 표시합니다.</p>
               <p>• 사운드 알림: 새 메시지가 도착했을 때 알림음을 재생합니다.</p>
               <p>• 타이핑 표시: 다른 사용자가 메시지를 입력 중일 때 표시합니다.</p>
+              
+              {/* iOS PWA 특별 안내 */}
+              {typeof window !== 'undefined' && 
+               (window.navigator as any).standalone === true && 
+               /iPad|iPhone|iPod/.test(navigator.userAgent) && (
+                <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-blue-700">
+                  <div className="font-medium">🍎 iOS PWA 알림 안내</div>
+                  <div className="mt-1">
+                    • iPhone에서 홈 화면에 추가한 PWA 앱에서는 알림 권한이 제한적일 수 있습니다.
+                  </div>
+                  <div>
+                    • 알림이 작동하지 않으면 iOS 설정 &gt; 알림에서 &apos;소소채팅&apos; 앱의 알림을 허용해주세요.
+                  </div>
+                  <div>
+                    • 또는 Safari 브라우저에서 직접 사용하시면 더 안정적입니다.
+                  </div>
+                </div>
+              )}
+
+              {/* Android PWA 특별 안내 */}
+              {typeof window !== 'undefined' && 
+               /Android/i.test(navigator.userAgent) &&
+               (window.matchMedia('(display-mode: standalone)').matches || 
+                window.matchMedia('(display-mode: fullscreen)').matches) && (
+                <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded text-green-700">
+                  <div className="font-medium">🤖 Android PWA 알림 안내</div>
+                  <div className="mt-1">
+                    • Android에서 홈 화면에 추가한 PWA 앱은 알림이 잘 지원됩니다.
+                  </div>
+                  <div>
+                    • 알림이 작동하지 않으면 Android 설정 &gt; 앱 &gt; 소소채팅 &gt; 알림을 확인해주세요.
+                  </div>
+                  <div>
+                    • Chrome 또는 Samsung Browser에서 가장 안정적으로 작동합니다.
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
