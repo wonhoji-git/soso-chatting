@@ -19,6 +19,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
   const [showReconnectAlert, setShowReconnectAlert] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const hasJoinedRef = useRef(false);
   const isUnmountingRef = useRef(false);
@@ -265,19 +266,26 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (newMessage.trim() && isConnected && !isUnmountingRef.current) {
-      try {
-        console.log('🚀 Sending message:', newMessage.trim());
-        console.log('👤 Current user:', currentUser);
-        console.log('🔗 Is connected:', isConnected);
-        
-        // 타이핑 중지
-        stopTyping(currentUser);
-        
-        await sendMessage(newMessage.trim(), currentUser);
-        setNewMessage('');
-        console.log('✅ Message sent successfully');
-      } catch (error) {
+    
+    // 이미 전송 중이면 중복 실행 방지
+    if (isSending || !newMessage.trim() || !isConnected || isUnmountingRef.current) {
+      return;
+    }
+    
+    setIsSending(true);
+    
+    try {
+      console.log('🚀 Sending message:', newMessage.trim());
+      console.log('👤 Current user:', currentUser);
+      console.log('🔗 Is connected:', isConnected);
+      
+      // 타이핑 중지
+      stopTyping(currentUser);
+      
+      await sendMessage(newMessage.trim(), currentUser);
+      setNewMessage('');
+      console.log('✅ Message sent successfully');
+    } catch (error) {
         console.error('❌ Failed to send message:', error);
         
         // 에러를 디버깅 서버로 전송
@@ -384,20 +392,15 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
             reconnect();
           }, 2000);
         }
-      }
-    } else {
-      console.log('⚠️ Message send blocked:', {
-        hasMessage: !!newMessage.trim(),
-        isConnected,
-        isUnmounting: isUnmountingRef.current
-      });
+    } finally {
+      setIsSending(false);
     }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (newMessage.trim() && isConnected && !isUnmountingRef.current) {
+      if (newMessage.trim() && isConnected && !isUnmountingRef.current && !isSending) {
         handleSendMessage(e as any);
       }
     }
@@ -1160,18 +1163,27 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
               className="flex-1 px-3 md:px-4 lg:px-6 py-3 md:py-4 lg:py-5 rounded-2xl border-3 border-pink-300 focus:border-purple-400 focus:outline-none font-medium disabled:opacity-50 text-base lg:text-lg bg-white/80 placeholder-purple-400 mobile-input-area"
               style={{ fontSize: '16px' }} // Prevents zoom on iOS
               maxLength={200}
-              disabled={!isConnected}
+              disabled={!isConnected || isSending}
               autoComplete="off"
               enterKeyHint="send"
             />
             <button
               type="submit"
-              disabled={!newMessage.trim() || !isConnected}
+              disabled={!newMessage.trim() || !isConnected || isSending}
               className="mobile-touch-target px-4 md:px-6 lg:px-8 py-3 md:py-4 lg:py-5 bg-gradient-to-r from-pink-400 to-purple-500 text-white font-bold rounded-2xl hover:from-pink-500 hover:to-purple-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 text-sm md:text-base lg:text-lg flex-shrink-0 shadow-lg transform hover:scale-105 active:scale-95"
               aria-label="메시지 보내기"
             >
-              <span className="hidden sm:inline">보내기! 🚀</span>
-              <span className="sm:hidden">🚀</span>
+              {isSending ? (
+                <>
+                  <span className="hidden sm:inline">전송중... ⏳</span>
+                  <span className="sm:hidden">⏳</span>
+                </>
+              ) : (
+                <>
+                  <span className="hidden sm:inline">보내기! 🚀</span>
+                  <span className="sm:hidden">🚀</span>
+                </>
+              )}
             </button>
           </form>
         </div>

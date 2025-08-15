@@ -87,25 +87,8 @@ export default function MobileFallbackNotification({ onRequestShow }: MobileFall
               ×
             </button>
           </div>
-          
-          {/* 진행률 바 */}
-          <div className="mt-3 h-1 bg-white/20 rounded-full overflow-hidden">
-            <div 
-              className="h-full bg-white/60 rounded-full transition-all ease-linear"
-              style={{
-                animation: `shrink ${notification.duration}ms linear forwards`
-              }}
-            />
-          </div>
         </div>
       ))}
-      
-      <style jsx>{`
-        @keyframes shrink {
-          from { width: 100%; }
-          to { width: 0%; }
-        }
-      `}</style>
     </div>
   );
 }
