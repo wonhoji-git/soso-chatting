@@ -28,6 +28,12 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
   const [sidebarAnimation, setSidebarAnimation] = useState<'idle' | 'opening' | 'closing'>('idle');
   const [showSwipeHint, setShowSwipeHint] = useState(true);
   const [lastInteraction, setLastInteraction] = useState(Date.now());
+  
+  // 스크롤 상태 관리
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   // 자주 사용하는 이모지 목록
   const popularEmojis = [
@@ -79,13 +85,113 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
     console.log('  - Other count:', otherUsers.length);
   }, [onlineUsers, currentUser, otherUsers, totalUserCount]);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  const scrollToBottom = useCallback((force = false) => {
+    if (force || isAtBottom) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      setShowScrollToBottom(false);
+      setUnreadCount(0);
+    }
+  }, [isAtBottom]);
 
+  // 스크롤 위치 감지
+  const handleScroll = useCallback(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    const threshold = 100; // 100px 이내면 하단으로 간주
+    const atBottom = scrollTop + clientHeight >= scrollHeight - threshold;
+    
+    console.log('📜 Scroll position:', {
+      scrollTop,
+      scrollHeight,
+      clientHeight,
+      threshold,
+      atBottom,
+      isCurrentlyAtBottom: isAtBottom
+    });
+    
+    setIsAtBottom(atBottom);
+    setShowScrollToBottom(!atBottom);
+    
+    // 사용자가 스크롤을 맨 아래로 내리면 읽지 않은 메시지 카운트 초기화
+    if (atBottom) {
+      setUnreadCount(0);
+    }
+  }, [isAtBottom]);
+
+  // 메시지 변경 시 스크롤 처리
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+    const prevMessagesLength = useRef(messages.length);
+    
+    if (messages.length > prevMessagesLength.current) {
+      // 새 메시지가 추가된 경우
+      if (isAtBottom) {
+        // 사용자가 하단에 있으면 자동 스크롤
+        setTimeout(() => scrollToBottom(false), 100);
+      } else {
+        // 사용자가 위에서 스크롤 중이면 읽지 않은 메시지 카운트 증가
+        const newMessagesCount = messages.length - prevMessagesLength.current;
+        setUnreadCount(prev => prev + newMessagesCount);
+      }
+    }
+    
+    prevMessagesLength.current = messages.length;
+  }, [messages, isAtBottom, scrollToBottom]);
+
+  // 스크롤 이벤트 등록
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    
+    // 초기 스크롤 상태 확인
+    handleScroll();
+    
+    return () => {
+      container.removeEventListener('scroll', handleScroll);
+    };
+  }, [handleScroll]);
+
+  // 키보드 단축키 (End: 맨 아래로, Home: 맨 위로)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target && (e.target as HTMLElement).tagName === 'INPUT') {
+        // 입력 필드에서는 키보드 단축키 무시
+        return;
+      }
+      
+      if (e.key === 'End') {
+        e.preventDefault();
+        scrollToBottom(true);
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        const container = messagesContainerRef.current;
+        if (container) {
+          container.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+      } else if (e.key === 'PageDown') {
+        e.preventDefault();
+        const container = messagesContainerRef.current;
+        if (container) {
+          container.scrollBy({ top: container.clientHeight * 0.8, behavior: 'smooth' });
+        }
+      } else if (e.key === 'PageUp') {
+        e.preventDefault();
+        const container = messagesContainerRef.current;
+        if (container) {
+          container.scrollBy({ top: -container.clientHeight * 0.8, behavior: 'smooth' });
+        }
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [scrollToBottom]);
 
   useEffect(() => {
     console.log('🏠 joinChat useEffect triggered:', {
@@ -165,7 +271,86 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
         console.log('✅ Message sent successfully');
       } catch (error) {
         console.error('❌ Failed to send message:', error);
-        // 사용자에게 에러 알림을 표시할 수 있습니다
+        
+        // 모바일 환경 감지
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        
+        // 사용자에게 에러 알림 표시
+        let errorMessage = '메시지 전송에 실패했습니다.';
+        let isRetryable = true;
+        
+        if (error instanceof Error) {
+          const errorMsg = error.message.toLowerCase();
+          
+          if (errorMsg.includes('모바일 네트워크') || errorMsg.includes('timeout')) {
+            errorMessage = isMobile 
+              ? '📱 모바일 네트워크가 불안정합니다. WiFi 연결을 확인해주세요.' 
+              : '🌐 네트워크 연결이 불안정합니다. 다시 시도해주세요.';
+            isRetryable = true;
+          } else if (errorMsg.includes('not connected') || errorMsg.includes('연결이 끊어졌')) {
+            errorMessage = '🔌 연결이 끊어졌습니다. 인터넷 연결을 확인해주세요.';
+            isRetryable = true;
+          } else if (errorMsg.includes('too long') || errorMsg.includes('maximum')) {
+            errorMessage = '📝 메시지가 너무 깁니다. (최대 1000자)';
+            isRetryable = false;
+          } else if (errorMsg.includes('invalid')) {
+            errorMessage = '⚠️ 잘못된 데이터입니다. 페이지를 새로고침해주세요.';
+            isRetryable = false;
+          } else if (errorMsg.includes('server error') || errorMsg.includes('서버 오류')) {
+            errorMessage = '🔧 서버에 일시적인 문제가 발생했습니다. 잠시 후 다시 시도해주세요.';
+            isRetryable = true;
+          } else if (errorMsg.includes('500') || errorMsg.includes('503')) {
+            errorMessage = '🚫 서버가 일시적으로 사용할 수 없습니다. 잠시 후 다시 시도해주세요.';
+            isRetryable = true;
+          }
+        }
+        
+        // 임시 에러 메시지 표시 (모바일 친화적 스타일)
+        const errorDiv = document.createElement('div');
+        errorDiv.innerHTML = `
+          <div style="
+            position: fixed; 
+            top: ${isMobile ? '80px' : '20px'}; 
+            left: 50%; 
+            transform: translateX(-50%);
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            color: white; 
+            padding: ${isMobile ? '16px 24px' : '12px 20px'}; 
+            border-radius: ${isMobile ? '16px' : '8px'}; 
+            box-shadow: 0 8px 32px rgba(239, 68, 68, 0.4);
+            z-index: 999999;
+            max-width: ${isMobile ? '95%' : '90%'};
+            text-align: center;
+            font-weight: 500;
+            font-size: ${isMobile ? '16px' : '14px'};
+            animation: slideInDown 0.3s ease-out;
+          ">
+            ${errorMessage}
+            ${isRetryable ? '<br><small style=\"opacity: 0.8; margin-top: 4px; display: inline-block;\">💡 다시 시도하거나 새로고침해보세요</small>' : ''}
+          </div>
+        `;
+        
+        document.body.appendChild(errorDiv);
+        
+        // 모바일에서는 더 오래 표시 (읽을 시간 확보)
+        const displayTime = isMobile ? 7000 : 5000;
+        setTimeout(() => {
+          if (errorDiv.parentNode) {
+            errorDiv.style.animation = 'slideOutUp 0.3s ease-in';
+            setTimeout(() => {
+              if (errorDiv.parentNode) {
+                errorDiv.parentNode.removeChild(errorDiv);
+              }
+            }, 300);
+          }
+        }, displayTime);
+        
+        // 재시도 가능한 에러인 경우 자동 재연결 시도
+        if (isRetryable && errorMessage.includes('연결')) {
+          setTimeout(() => {
+            reconnect();
+          }, 2000);
+        }
       }
     } else {
       console.log('⚠️ Message send blocked:', {
@@ -738,7 +923,14 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
         </div>
 
         {/* 메시지 영역 - 반응형 개선 */}
-        <div className="flex-1 p-3 md:p-4 lg:p-6 xl:p-8 mobile-chat-messages space-y-3 md:space-y-4 lg:space-y-6 relative">
+        <div 
+          ref={messagesContainerRef}
+          className="flex-1 p-3 md:p-4 lg:p-6 xl:p-8 mobile-chat-messages space-y-3 md:space-y-4 lg:space-y-6 relative overflow-y-auto"
+          style={{
+            scrollBehavior: 'smooth',
+            overscrollBehavior: 'contain'
+          }}
+        >
           {/* 배경 패턴 - 반응형 크기 */}
           <div className="absolute inset-0 opacity-5 pointer-events-none">
             <div className="absolute top-10 left-10 text-4xl md:text-6xl lg:text-8xl">🌟</div>
@@ -803,6 +995,27 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
           />
           
           <div ref={messagesEndRef} />
+          
+          {/* 스크롤 하단 버튼 */}
+          {showScrollToBottom && (
+            <button
+              onClick={() => scrollToBottom(true)}
+              className="fixed bottom-24 right-6 z-50 bg-gradient-to-r from-pink-400 to-purple-500 text-white p-3 rounded-full shadow-2xl hover:from-pink-500 hover:to-purple-600 transition-all duration-200 transform hover:scale-110 active:scale-95 animate-bounce"
+              style={{
+                bottom: 'max(6rem, calc(env(safe-area-inset-bottom) + 6rem))'
+              }}
+              aria-label="최신 메시지로 이동"
+            >
+              <div className="relative">
+                <span className="text-xl">⬇️</span>
+                {unreadCount > 0 && (
+                  <div className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full min-w-[20px] h-5 flex items-center justify-center font-bold animate-pulse">
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </div>
+                )}
+              </div>
+            </button>
+          )}
         </div>
 
         {/* 이모지 선택기 */}
@@ -830,6 +1043,20 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
           </div>
         )}
 
+        {/* 스크롤 가이드 표시 */}
+        {!isAtBottom && messages.length > 5 && (
+          <div className="scroll-guide bg-gradient-to-r from-blue-100 to-purple-100 p-3 text-center border-t-2 border-blue-200 shadow-inner">
+            <p className="text-sm text-purple-700 font-medium flex items-center justify-center space-x-2 mb-1">
+              <span className="animate-bounce">📜</span>
+              <span>기존 메시지를 보고 있습니다. 아래 버튼을 눌러 최신 메시지로 이동하세요.</span>
+              <span className="animate-pulse">✨</span>
+            </p>
+            <div className="hidden md:block text-xs text-purple-500 mt-2 opacity-75">
+              💡 키보드 단축키: End(최신), Home(처음), Page Up/Down(스크롤)
+            </div>
+          </div>
+        )}
+        
         {/* 메시지 입력 - 반응형 개선 */}
         <div 
           className="bg-gradient-to-r from-pink-100 via-purple-100 to-blue-100 p-3 md:p-4 lg:p-6 shadow-xl border-t-4 border-pink-300 mobile-input-area"
@@ -869,6 +1096,13 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
                 });
 
                 setNewMessage(newValue);
+                
+                // 메시지 입력 시 자동으로 하단으로 스크롤 (사용자가 입력할 때)
+                if (hasContent && !isAtBottom && messages.length > 0) {
+                  setTimeout(() => {
+                    scrollToBottom(true);
+                  }, 100);
+                }
                 
                 // 타이핑 시작 (메시지가 있을 때만)
                 if (hasContent && isConnected) {

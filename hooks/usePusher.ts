@@ -414,6 +414,28 @@ export const usePusher = () => {
         console.log('📨 Raw message received:', message);
         logConnectionState('message_received', `new message from ${message.userName}`);
         
+        // 에러 메시지인지 확인하여 필터링
+        const isErrorMessage = message.text && (
+          message.text.includes('Application error:') ||
+          message.text.includes('client-side exception') ||
+          message.text.includes('오류가 발생했습니다') ||
+          message.text.includes('에러') ||
+          message.text.includes('Error:') ||
+          message.text.includes('Failed to')
+        );
+        
+        if (isErrorMessage) {
+          console.warn('⚠️ Filtering out error message from display:', {
+            messageId: message.id,
+            text: message.text.substring(0, 100),
+            userId: message.userId,
+            userName: message.userName
+          });
+          
+          // 에러 메시지는 채팅 목록에 추가하지 않음
+          return;
+        }
+        
         setMessages(prev => {
           // 다중 조건으로 중복 확인
           const isDuplicateById = prev.some(existingMsg => existingMsg.id === message.id);
@@ -774,6 +796,30 @@ export const usePusher = () => {
     try {
       console.log('🚀 sendMessage called with:', { message, user });
       
+      // 모바일 환경 감지
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      
+      console.log('📱 Device info:', {
+        isMobile,
+        isIOS,
+        userAgent: navigator.userAgent,
+        platform: navigator.platform
+      });
+      
+      // 입력 데이터 검증 강화
+      if (!message || typeof message !== 'string' || message.trim().length === 0) {
+        throw new Error('Invalid message: empty or non-string');
+      }
+      
+      if (!user || !user.id || !user.name || !user.avatar) {
+        throw new Error('Invalid user data: missing required fields');
+      }
+
+      if (message.length > 1000) {
+        throw new Error('Message too long: maximum 1000 characters');
+      }
+      
       if (!isPusherConnected()) {
         const currentState = getConnectionState();
         console.log('❌ Not connected to Pusher:', currentState);
@@ -783,30 +829,116 @@ export const usePusher = () => {
 
       console.log('✅ Pusher is connected, sending message to server');
       
-      // 고유한 메시지 ID 생성
-      const messageId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      console.log('🆔 Generated message ID:', messageId);
-      
-      console.log('📤 Sending to API...');
-      const response = await fetch('/api/pusher', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ message, user, messageId }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.text();
-        console.error('❌ API response error:', errorData);
-        throw new Error(`Failed to send message: ${response.status}`);
+      // 안전한 메시지 ID 생성 (모바일 환경 고려)
+      let messageId;
+      try {
+        if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+          messageId = `${Date.now()}-${crypto.randomUUID()}`;
+        } else if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+          const array = new Uint32Array(2);
+          crypto.getRandomValues(array);
+          messageId = `${Date.now()}-${array[0]}-${array[1]}`;
+        } else {
+          messageId = `${Date.now()}-${Math.random().toString(36).substr(2, 12)}-${Math.random().toString(36).substr(2, 12)}`;
+        }
+      } catch (cryptoError) {
+        console.warn('⚠️ Crypto API failed, using fallback:', cryptoError);
+        messageId = `${Date.now()}-${Math.random().toString(36).substr(2, 12)}-${Math.random().toString(36).substr(2, 12)}`;
       }
       
-      const responseData = await response.json();
-      console.log('✅ API response success:', responseData);
-      logConnectionState('send_message', 'success');
+      console.log('🆔 Generated message ID:', messageId);
+      
+      // 안전한 페이로드 생성
+      const payload = {
+        message: message.trim(),
+        user: {
+          id: user.id,
+          name: user.name,
+          avatar: user.avatar,
+          joinedAt: user.joinedAt
+        },
+        messageId,
+        // 모바일 환경 정보 추가
+        clientInfo: {
+          isMobile,
+          isIOS,
+          userAgent: navigator.userAgent.substring(0, 100) // 길이 제한
+        }
+      };
+      
+      console.log('📤 Sending to API...');
+      
+      // 모바일 환경에서 더 긴 타임아웃 적용
+      const timeoutDuration = isMobile ? 15000 : 10000; // 모바일: 15초, 데스크톱: 10초
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+      }, timeoutDuration);
+      
+      try {
+        const response = await fetch('/api/pusher', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          let errorData;
+          try {
+            errorData = await response.json();
+          } catch {
+            try {
+              errorData = await response.text();
+            } catch {
+              errorData = `HTTP ${response.status} ${response.statusText}`;
+            }
+          }
+          console.error('❌ API response error:', errorData);
+          throw new Error(`Server error (${response.status}): ${typeof errorData === 'string' ? errorData : JSON.stringify(errorData)}`);
+        }
+        
+        const responseData = await response.json();
+        console.log('✅ API response success:', responseData);
+        logConnectionState('send_message', 'success');
+        
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+        
+        if (fetchError.name === 'AbortError') {
+          console.error('❌ Request timeout after', timeoutDuration, 'ms');
+          throw new Error(`Request timeout (${timeoutDuration/1000}s) - 네트워크가 느리거나 서버 응답이 지연되고 있습니다.`);
+        }
+        
+        throw fetchError;
+      }
+      
     } catch (error) {
-      console.error('❌ Error sending message:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('❌ Error sending message:', {
+        error: errorMessage,
+        stack: error instanceof Error ? error.stack : undefined,
+        isMobile: /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+      });
+      
+      logConnectionState('send_message', `failed - ${errorMessage}`);
+      
+      // 모바일 특화 에러 메시지로 변환
+      if (errorMessage.includes('timeout') || errorMessage.includes('네트워크')) {
+        throw new Error('모바일 네트워크 오류: 연결이 불안정합니다. 다시 시도해주세요.');
+      } else if (errorMessage.includes('Server error')) {
+        throw new Error('서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
+      } else if (errorMessage.includes('Invalid')) {
+        throw new Error('잘못된 데이터입니다. 페이지를 새로고침해주세요.');
+      } else if (errorMessage.includes('Not connected')) {
+        throw new Error('연결이 끊어졌습니다. 인터넷 연결을 확인해주세요.');
+      }
+      
       throw error;
     }
   };

@@ -15,11 +15,19 @@ export const NotificationSettings = ({
   onRequestPermission 
 }: NotificationSettingsProps) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [permissionStatus, setPermissionStatus] = useState<string>(
-    typeof window !== 'undefined' && 'Notification' in window 
-      ? Notification.permission 
-      : 'unsupported'
-  );
+  const [permissionStatus, setPermissionStatus] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      // 모바일 및 데스크톱 브라우저에서 Notification API 지원 확인
+      if ('Notification' in window) {
+        return Notification.permission;
+      }
+      // Service Worker와 Push API가 있다면 부분적 지원으로 간주
+      if ('serviceWorker' in navigator && 'PushManager' in window) {
+        return 'partial';
+      }
+    }
+    return 'unsupported';
+  });
 
   const handlePermissionRequest = async () => {
     console.log('🔔 사용자가 권한 요청 버튼을 클릭했습니다.');
@@ -37,6 +45,8 @@ export const NotificationSettings = ({
         return '❌ 차단됨';
       case 'default':
         return '❓ 미설정';
+      case 'partial':
+        return '📱 모바일 지원';
       case 'unsupported':
         return '❌ 지원되지 않음';
       default:
@@ -102,7 +112,8 @@ export const NotificationSettings = ({
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      if (permissionStatus === 'granted') {
+                      const canUseNotifications = permissionStatus === 'granted' || permissionStatus === 'partial';
+                      if (canUseNotifications) {
                         const newValue = !settings.desktop;
                         console.log('🔧 브라우저 알림 토글 클릭:', {
                           previousValue: settings.desktop,
@@ -114,12 +125,12 @@ export const NotificationSettings = ({
                         console.log('❌ 브라우저 알림 권한이 없어서 토글 불가');
                       }
                     }}
-                    disabled={permissionStatus !== 'granted'}
+                    disabled={permissionStatus !== 'granted' && permissionStatus !== 'partial'}
                     className={`relative inline-flex items-center h-6 w-11 rounded-full transition-colors duration-200 ${
                       settings.desktop 
                         ? 'bg-blue-600' 
                         : 'bg-gray-200'
-                    } ${permissionStatus !== 'granted' ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                    } ${(permissionStatus !== 'granted' && permissionStatus !== 'partial') ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
                   >
                     <span 
                       className={`inline-block w-5 h-5 bg-white rounded-full shadow transform transition-transform duration-200 ${
@@ -132,7 +143,7 @@ export const NotificationSettings = ({
               
               <div className="text-xs text-gray-500">
                 브라우저 권한: {getPermissionStatusText()}
-                {permissionStatus !== 'granted' && permissionStatus !== 'unsupported' && (
+                {(permissionStatus === 'default' || permissionStatus === 'partial') && (
                   <button
                     type="button"
                     onClick={(e) => {
@@ -225,12 +236,44 @@ export const NotificationSettings = ({
                     e.preventDefault();
                     e.stopPropagation();
                     console.log('🔔 브라우저 알림 테스트 버튼 클릭');
-                    if (permissionStatus === 'granted' && settings.desktop) {
+                    const canUseNotifications = (permissionStatus === 'granted' || permissionStatus === 'partial') && settings.desktop;
+                    
+                    if (canUseNotifications) {
                       try {
-                        new Notification('🧪 테스트 알림', {
-                          body: '브라우저 알림이 정상 작동합니다!',
-                          icon: '/images/cat.jpg',
-                        });
+                        if (permissionStatus === 'granted' && 'Notification' in window) {
+                          // 데스크톱 브라우저 표준 알림
+                          new Notification('🧪 테스트 알림', {
+                            body: '브라우저 알림이 정상 작동합니다!',
+                            icon: '/images/cat.jpg',
+                          });
+                        } else if (permissionStatus === 'partial') {
+                          // 모바일에서 대체 알림 (시각적 알림)
+                          const alertDiv = document.createElement('div');
+                          alertDiv.innerHTML = `
+                            <div style="
+                              position: fixed; 
+                              top: 20px; 
+                              right: 20px; 
+                              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                              color: white; 
+                              padding: 16px 20px; 
+                              border-radius: 12px; 
+                              box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+                              z-index: 999999;
+                              max-width: 300px;
+                              animation: slideInRight 0.3s ease-out;
+                            ">
+                              <div style="font-weight: bold; margin-bottom: 4px;">🧪 테스트 알림</div>
+                              <div style="font-size: 14px; opacity: 0.9;">모바일 알림이 정상 작동합니다!</div>
+                            </div>
+                          `;
+                          document.body.appendChild(alertDiv);
+                          setTimeout(() => {
+                            if (alertDiv.parentNode) {
+                              alertDiv.parentNode.removeChild(alertDiv);
+                            }
+                          }, 3000);
+                        }
                         console.log('✅ 브라우저 알림 테스트 성공');
                       } catch (error) {
                         console.error('❌ 브라우저 알림 테스트 실패:', error);
