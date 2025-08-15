@@ -15,12 +15,17 @@ export const usePusher = () => {
   const pusherRef = useRef<InstanceType<typeof Pusher> | null>(null);
   const channelRef = useRef<ReturnType<Pusher['subscribe']> | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const syncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isDisconnectingRef = useRef<boolean>(false);
   const connectionAttemptsRef = useRef<number>(0);
   const isInitializedRef = useRef<boolean>(false);
   const componentMountedRef = useRef<boolean>(false);
+  const currentUserRef = useRef<User | null>(null);
   const maxRetries = 5;
   const retryDelay = 2000;
+  const heartbeatInterval = 30000; // 30초
+  const syncInterval = 60000; // 1분
 
   // 중복 사용자 체크 함수
   const isUserAlreadyOnline = useCallback((userId: string) => {
@@ -47,6 +52,101 @@ export const usePusher = () => {
   const getCurrentTransport = useCallback(() => {
     if (!pusherRef.current) return null;
     return pusherRef.current.connection.state;
+  }, []);
+
+  // 서버에서 활성 사용자 목록 가져오기
+  const syncWithServer = useCallback(async () => {
+    try {
+      console.log('🔄 Syncing with server...');
+      const response = await fetch('/api/pusher/user');
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.activeUsers) {
+          console.log('🔄 Server sync - active users:', data.activeUsers.length);
+          
+          // 현재 사용자를 제외한 다른 사용자들만 필터링
+          const currentUserId = currentUserRef.current?.id;
+          const serverUsers = data.activeUsers.filter((user: User) => user.id !== currentUserId);
+          
+          // 로컬 상태와 서버 상태 비교 및 업데이트
+          setOnlineUsers(prev => {
+            const localUserIds = new Set(prev.map(u => u.id));
+            const serverUserIds = new Set(serverUsers.map((u: User) => u.id));
+            
+            // 서버에만 있는 사용자들 추가
+            const usersToAdd = serverUsers.filter((u: User) => !localUserIds.has(u.id));
+            
+            // 로컬에만 있는 사용자들 제거
+            const usersToKeep = prev.filter(u => serverUserIds.has(u.id) || u.id === currentUserId);
+            
+            const newUsers = [...usersToKeep, ...usersToAdd];
+            
+            if (usersToAdd.length > 0 || prev.length !== usersToKeep.length) {
+              console.log('🔄 Updated online users from server sync');
+              console.log('  - Added:', usersToAdd.length, 'users');
+              console.log('  - Removed:', prev.length - usersToKeep.length, 'users');
+              console.log('  - Total online:', newUsers.length);
+            }
+            
+            return newUsers;
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error syncing with server:', error);
+    }
+  }, []);
+
+  // 하트비트 전송
+  const sendHeartbeat = useCallback(async () => {
+    if (!currentUserRef.current || !isConnected) return;
+    
+    try {
+      await fetch('/api/pusher/user', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userId: currentUserRef.current.id }),
+      });
+    } catch (error) {
+      console.error('Error sending heartbeat:', error);
+    }
+  }, [isConnected]);
+
+  // 하트비트 및 동기화 시작
+  const startPeriodicTasks = useCallback(() => {
+    // 하트비트 타이머
+    if (heartbeatIntervalRef.current) {
+      clearInterval(heartbeatIntervalRef.current);
+    }
+    heartbeatIntervalRef.current = setInterval(() => {
+      if (isConnected && currentUserRef.current) {
+        sendHeartbeat();
+      }
+    }, heartbeatInterval);
+
+    // 동기화 타이머
+    if (syncIntervalRef.current) {
+      clearInterval(syncIntervalRef.current);
+    }
+    syncIntervalRef.current = setInterval(() => {
+      if (isConnected) {
+        syncWithServer();
+      }
+    }, syncInterval);
+  }, [isConnected, sendHeartbeat, syncWithServer]);
+
+  // 주기적 작업 중지
+  const stopPeriodicTasks = useCallback(() => {
+    if (heartbeatIntervalRef.current) {
+      clearInterval(heartbeatIntervalRef.current);
+      heartbeatIntervalRef.current = null;
+    }
+    if (syncIntervalRef.current) {
+      clearInterval(syncIntervalRef.current);
+      syncIntervalRef.current = null;
+    }
   }, []);
 
   // 연결 상태 로깅 함수 (더 상세한 정보 포함)
@@ -141,12 +241,19 @@ export const usePusher = () => {
         setLastError(null);
         connectionAttemptsRef.current = 0;
         isDisconnectingRef.current = false;
+        
+        // 연결되면 주기적 작업 시작 및 서버와 동기화
+        startPeriodicTasks();
+        setTimeout(syncWithServer, 1000); // 1초 후 서버와 동기화
       });
 
       pusher.connection.bind('disconnected', () => {
         logConnectionState('disconnected_event', 'event triggered');
         setConnectionStatus('disconnected');
         setIsConnected(false);
+        
+        // 연결이 끊어지면 주기적 작업 중지
+        stopPeriodicTasks();
         
         // 수동으로 해제한 것이 아닐 때만 자동 재연결 시도
         if (!isDisconnectingRef.current && connectionAttemptsRef.current < maxRetries) {
@@ -186,13 +293,17 @@ export const usePusher = () => {
           setConnectionStatus('connected');
           setIsConnected(true);
           isDisconnectingRef.current = false;
+          startPeriodicTasks();
+          setTimeout(syncWithServer, 1000);
         } else if (states.current === 'disconnected') {
           setConnectionStatus('disconnected');
           setIsConnected(false);
+          stopPeriodicTasks();
         } else if (states.current === 'connecting') {
           setConnectionStatus('connecting');
         } else if (states.current === 'failed') {
           setConnectionStatus('failed');
+          stopPeriodicTasks();
         }
       });
 
@@ -324,7 +435,7 @@ export const usePusher = () => {
         attemptReconnect();
       }
     }
-  }, [isUserAlreadyOnline, logConnectionState]);
+  }, [isUserAlreadyOnline, logConnectionState, startPeriodicTasks, syncWithServer, stopPeriodicTasks]);
 
   // 재연결 함수 (개선)
   const attemptReconnect = useCallback(() => {
@@ -361,6 +472,9 @@ export const usePusher = () => {
     isDisconnectingRef.current = true;
     isInitializedRef.current = false;
     
+    // 주기적 작업 중지
+    stopPeriodicTasks();
+    
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
@@ -369,6 +483,7 @@ export const usePusher = () => {
     // 로컬 레퍼런스 정리
     channelRef.current = null;
     pusherRef.current = null;
+    currentUserRef.current = null;
     
     // 싱글톤 인스턴스 해제
     releasePusherInstance();
@@ -385,7 +500,7 @@ export const usePusher = () => {
       isDisconnectingRef.current = false;
       logConnectionState('cleanup', 'cleanup completed, flag reset');
     }, resetDelay);
-  }, [logConnectionState]);
+  }, [logConnectionState, stopPeriodicTasks]);
 
   useEffect(() => {
     // 컴포넌트 마운트 시 초기화
@@ -415,7 +530,7 @@ export const usePusher = () => {
       clearTimeout(initTimer);
       cleanupPusher();
     };
-  }, [initializePusher, cleanupPusher, logConnectionState]);
+  }, [initializePusher, cleanupPusher, logConnectionState, syncWithServer]);
 
   // 수동 재연결 함수
   const reconnect = useCallback(() => {
@@ -487,6 +602,9 @@ export const usePusher = () => {
         throw new Error('Channel not subscribed');
       }
 
+      // 현재 사용자 설정
+      currentUserRef.current = user;
+
       // 현재 사용자를 로컬에서 제거 (재입장 시 중복 방지)
       console.log('🔄 Joining chat - removing current user from local list first');
       setOnlineUsers(prev => {
@@ -508,6 +626,9 @@ export const usePusher = () => {
         throw new Error(errorData.error || 'Failed to join chat');
       }
       
+      // 입장 후 서버와 동기화
+      setTimeout(syncWithServer, 2000);
+      
       logConnectionState('join_chat', 'success');
     } catch (error) {
       console.error('Error joining chat:', error);
@@ -519,6 +640,11 @@ export const usePusher = () => {
     try {
       // 로컬 상태에서 즉시 제거
       setOnlineUsers(prev => prev.filter(u => u.id !== user.id));
+      
+      // 현재 사용자 참조 정리
+      if (currentUserRef.current?.id === user.id) {
+        currentUserRef.current = null;
+      }
       
       if (isDisconnectingRef.current || !isPusherConnected()) {
         const currentState = getConnectionState();
