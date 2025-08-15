@@ -34,6 +34,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const prevMessagesLengthRef = useRef(0);
 
   // 자주 사용하는 이모지 목록
   const popularEmojis = [
@@ -122,21 +123,19 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
 
   // 메시지 변경 시 스크롤 처리
   useEffect(() => {
-    const prevMessagesLength = useRef(messages.length);
-    
-    if (messages.length > prevMessagesLength.current) {
+    if (messages.length > prevMessagesLengthRef.current) {
       // 새 메시지가 추가된 경우
       if (isAtBottom) {
         // 사용자가 하단에 있으면 자동 스크롤
         setTimeout(() => scrollToBottom(false), 100);
       } else {
         // 사용자가 위에서 스크롤 중이면 읽지 않은 메시지 카운트 증가
-        const newMessagesCount = messages.length - prevMessagesLength.current;
+        const newMessagesCount = messages.length - prevMessagesLengthRef.current;
         setUnreadCount(prev => prev + newMessagesCount);
       }
     }
     
-    prevMessagesLength.current = messages.length;
+    prevMessagesLengthRef.current = messages.length;
   }, [messages, isAtBottom, scrollToBottom]);
 
   // 스크롤 이벤트 등록

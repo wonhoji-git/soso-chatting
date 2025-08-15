@@ -910,7 +910,7 @@ export const usePusher = () => {
       } catch (fetchError) {
         clearTimeout(timeoutId);
         
-        if (fetchError.name === 'AbortError') {
+        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
           console.error('❌ Request timeout after', timeoutDuration, 'ms');
           throw new Error(`Request timeout (${timeoutDuration/1000}s) - 네트워크가 느리거나 서버 응답이 지연되고 있습니다.`);
         }
