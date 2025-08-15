@@ -645,7 +645,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
       </div>
 
       {/* 메인 채팅 영역 */}
-      <div className="flex-1 flex flex-col min-w-0 mobile-chat-container">
+      <div className="flex-1 flex flex-col min-w-0">
         {/* 헤더 */}
         <div 
           className="bg-gradient-to-r from-pink-100 via-purple-100 to-blue-100 backdrop-blur-sm p-3 md:p-4 shadow-xl border-b-4 border-pink-300"

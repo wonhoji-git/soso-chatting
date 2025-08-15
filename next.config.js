@@ -14,6 +14,8 @@ const nextConfig = {
   trailingSlash: false,
   // 폰트 최적화
   optimizeFonts: true,
+  // React Strict Mode 비활성화 (개발 환경에서 Pusher 연결 안정성을 위해)
+  reactStrictMode: false,
 }
 
 module.exports = nextConfig

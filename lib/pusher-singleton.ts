@@ -65,13 +65,13 @@ export const releasePusherInstance = () => {
   // 개발 환경에서는 사용자가 0이 되어도 즉시 해제하지 않음
   if (process.env.NODE_ENV === 'development') {
     if (instanceUsers === 0) {
-      console.log('🔧 Development mode: keeping instance alive for 10 seconds');
+      console.log('🔧 Development mode: keeping instance alive for 3 seconds');
       setTimeout(() => {
         if (instanceUsers === 0) {
           console.log('🧹 Development cleanup: no users detected, cleaning up');
           cleanupPusherInstance();
         }
-      }, 10000);
+      }, 3000);
     }
     return;
   }

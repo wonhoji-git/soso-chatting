@@ -536,14 +536,29 @@ export const usePusher = () => {
     }, delay);
   }, [retryCount, initializePusher, logConnectionState]);
 
-  // Pusher 정리 함수 (싱글톤 사용)
+  // Pusher 정리 함수 (싱글톤 사용) - React Strict Mode 안전
   const cleanupPusher = useCallback(() => {
+    // 이미 정리 중이거나 초기화되지 않았다면 중복 정리 방지
+    if (isDisconnectingRef.current || !isInitializedRef.current) {
+      logConnectionState('cleanup_skipped', 'already disconnecting or not initialized');
+      return;
+    }
+    
     logConnectionState('cleanup_started', 'manual cleanup initiated');
     isDisconnectingRef.current = true;
     isInitializedRef.current = false;
     
+    // 초기화 ID 무효화 (진행 중인 초기화 방지)
+    initializationIdRef.current = null;
+    
     // 주기적 작업 중지
     stopPeriodicTasks();
+    
+    // 기존 정리 타이머 취소
+    if (cleanupTimeoutRef.current) {
+      clearTimeout(cleanupTimeoutRef.current);
+      cleanupTimeoutRef.current = null;
+    }
     
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
@@ -565,20 +580,38 @@ export const usePusher = () => {
     connectionAttemptsRef.current = 0;
     
     // 정리 완료 후 플래그 리셋 (개발 환경에서는 더 빠르게)
-    const resetDelay = process.env.NODE_ENV === 'development' ? 500 : 2000;
+    const resetDelay = process.env.NODE_ENV === 'development' ? 3000 : 2000;
     setTimeout(() => {
       isDisconnectingRef.current = false;
       logConnectionState('cleanup', 'cleanup completed, flag reset');
     }, resetDelay);
   }, [logConnectionState, stopPeriodicTasks]);
 
+  // React Strict Mode 안정화를 위한 ref
+  const initializationIdRef = useRef<string | null>(null);
+  const cleanupTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
+    // 고유한 초기화 ID 생성
+    const initId = `init-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    initializationIdRef.current = initId;
+    
     // 컴포넌트 마운트 시 초기화
     componentMountedRef.current = true;
-    logConnectionState('component_mount', 'component mounted, setting up pusher');
+    logConnectionState('component_mount', `component mounted, setting up pusher (${initId})`);
+    
+    // 기존 정리 타이머 취소
+    if (cleanupTimeoutRef.current) {
+      clearTimeout(cleanupTimeoutRef.current);
+      cleanupTimeoutRef.current = null;
+    }
     
     const initTimer = setTimeout(() => {
-      if (componentMountedRef.current && !isInitializedRef.current) {
+      // 현재 초기화 ID가 여전히 유효한지 확인 (React Strict Mode 방지)
+      if (initializationIdRef.current === initId && 
+          componentMountedRef.current && 
+          !isInitializedRef.current) {
+        
         // 개발 환경에서는 disconnecting 상태를 더 관대하게 처리
         if (process.env.NODE_ENV === 'development' && isDisconnectingRef.current) {
           logConnectionState('component_mount', 'dev mode - forcing reset of disconnecting state');
@@ -586,21 +619,42 @@ export const usePusher = () => {
         }
         
         if (!isDisconnectingRef.current) {
-          logConnectionState('component_mount', 'initializing pusher after delay');
+          logConnectionState('component_mount', `initializing pusher after delay (${initId})`);
           initializePusher();
         } else {
           logConnectionState('component_mount', `skipped - initialized: ${isInitializedRef.current}, disconnecting: ${isDisconnectingRef.current}`);
         }
+      } else {
+        logConnectionState('component_mount', `skipped - initialization cancelled (${initId} vs ${initializationIdRef.current})`);
       }
-    }, 500);
+    }, 1000);
 
     return () => {
-      logConnectionState('component_unmount', 'cleaning up');
+      // 초기화 ID 무효화
+      if (initializationIdRef.current === initId) {
+        initializationIdRef.current = null;
+      }
+      
+      logConnectionState('component_unmount', `cleaning up (${initId})`);
       componentMountedRef.current = false;
       clearTimeout(initTimer);
-      cleanupPusher();
+      
+      // React Strict Mode를 고려한 지연 정리
+      if (process.env.NODE_ENV === 'development') {
+        cleanupTimeoutRef.current = setTimeout(() => {
+          // 다른 컴포넌트 인스턴스가 초기화되지 않았다면 정리 진행
+          if (!componentMountedRef.current && !isInitializedRef.current) {
+            logConnectionState('cleanup_delayed', `proceeding with cleanup (${initId})`);
+            cleanupPusher();
+          } else {
+            logConnectionState('cleanup_cancelled', `cleanup cancelled - component remounted (${initId})`);
+          }
+        }, 2000); // 2초 지연
+      } else {
+        cleanupPusher();
+      }
     };
-  }, [initializePusher, cleanupPusher, logConnectionState, syncWithServer]);
+  }, [initializePusher, cleanupPusher, logConnectionState]);
 
   // 수동 재연결 함수
   const reconnect = useCallback(() => {
