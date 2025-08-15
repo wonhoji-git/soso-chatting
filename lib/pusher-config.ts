@@ -73,14 +73,25 @@ export const getPusherConfig = () => {
 
 // 클라이언트 사이드용 설정 가져오기 (공개 변수만)
 export const getPusherClientConfig = () => {
+  const isProduction = process.env.NODE_ENV === 'production';
+  
   const config = {
     key: process.env.NEXT_PUBLIC_PUSHER_KEY!,
     cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER!,
+    forceTLS: true,
+    enabledTransports: isProduction 
+      ? ['wss', 'xhr_streaming', 'xhr_polling'] 
+      : ['ws', 'wss', 'xhr_streaming', 'xhr_polling'],
+    disabledTransports: [],
+    activityTimeout: isProduction ? 60000 : 30000,
+    pongTimeout: isProduction ? 30000 : 25000,
+    unavailableTimeout: 16000,
   };
   
   console.log('📤 Pusher client config retrieved:', {
     key: config.key ? `${config.key.substring(0, 8)}...` : 'NOT_SET',
-    cluster: config.cluster || 'NOT_SET'
+    cluster: config.cluster || 'NOT_SET',
+    environment: isProduction ? 'production' : 'development'
   });
   
   return config;

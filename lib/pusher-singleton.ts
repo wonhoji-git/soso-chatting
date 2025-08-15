@@ -2,7 +2,7 @@
 'use client';
 
 import Pusher from 'pusher-js';
-import { validatePusherConfigClient } from './pusher-config';
+import { validatePusherConfigClient, getPusherClientConfig } from './pusher-config';
 
 // 전역 Pusher 인스턴스 관리
 let globalPusherInstance: Pusher | null = null;
@@ -33,13 +33,17 @@ export const getPusherInstance = (): { pusher: Pusher; channel: ReturnType<Pushe
 
     console.log('🆕 Creating new Pusher instance');
     
+    const isProduction = process.env.NODE_ENV === 'production';
     const pusher = new Pusher(process.env.NEXT_PUBLIC_PUSHER_KEY!, {
       cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER!,
       forceTLS: true,
-      enabledTransports: ['ws', 'wss', 'xhr_streaming', 'xhr_polling'],
+      enabledTransports: isProduction 
+        ? ['wss', 'xhr_streaming', 'xhr_polling'] 
+        : ['ws', 'wss', 'xhr_streaming', 'xhr_polling'],
       disabledTransports: [],
-      activityTimeout: 30000,
-      pongTimeout: 25000,
+      activityTimeout: isProduction ? 60000 : 30000,
+      pongTimeout: isProduction ? 30000 : 25000,
+      unavailableTimeout: 16000,
     });
 
     // 채널 구독
@@ -62,23 +66,16 @@ export const releasePusherInstance = () => {
   instanceUsers = Math.max(0, instanceUsers - 1);
   console.log(`📉 Released Pusher instance (remaining users: ${instanceUsers})`);
   
-  // 개발 환경에서는 사용자가 0이 되어도 즉시 해제하지 않음
-  if (process.env.NODE_ENV === 'development') {
-    if (instanceUsers === 0) {
-      console.log('🔧 Development mode: keeping instance alive for 3 seconds');
-      setTimeout(() => {
-        if (instanceUsers === 0) {
-          console.log('🧹 Development cleanup: no users detected, cleaning up');
-          cleanupPusherInstance();
-        }
-      }, 3000);
-    }
-    return;
-  }
-  
-  // 프로덕션에서는 사용자가 0이 되면 즉시 해제
+  // 환경에 관계없이 연결 안정성을 위해 지연된 정리 사용
   if (instanceUsers === 0) {
-    cleanupPusherInstance();
+    const delay = process.env.NODE_ENV === 'production' ? 5000 : 3000;
+    console.log(`🔧 Keeping instance alive for ${delay/1000} seconds`);
+    setTimeout(() => {
+      if (instanceUsers === 0) {
+        console.log('🧹 Delayed cleanup: no users detected, cleaning up');
+        cleanupPusherInstance();
+      }
+    }, delay);
   }
 };
 

@@ -23,11 +23,11 @@ export const usePusher = () => {
   const isInitializedRef = useRef<boolean>(false);
   const componentMountedRef = useRef<boolean>(false);
   const currentUserRef = useRef<User | null>(null);
-  const maxRetries = 5;
-  const retryDelay = 2000;
-  const heartbeatInterval = 30000; // 30초
-  const syncInterval = 60000; // 1분
-  const connectionCheckInterval = 5000; // 5초 - 연결 상태 확인
+  const maxRetries = process.env.NODE_ENV === 'production' ? 8 : 5;
+  const retryDelay = process.env.NODE_ENV === 'production' ? 3000 : 2000;
+  const heartbeatInterval = 45000; // 45초
+  const syncInterval = 90000; // 1.5분
+  const connectionCheckInterval = process.env.NODE_ENV === 'production' ? 10000 : 5000; // 프로덕션에서는 10초
 
   // 중복 사용자 체크 함수
   const isUserAlreadyOnline = useCallback((userId: string) => {
@@ -521,7 +521,8 @@ export const usePusher = () => {
       clearTimeout(reconnectTimeoutRef.current);
     }
 
-    const delay = Math.min(retryDelay * Math.pow(1.5, retryCount), 15000);
+    const maxDelay = process.env.NODE_ENV === 'production' ? 30000 : 15000;
+    const delay = Math.min(retryDelay * Math.pow(1.8, retryCount), maxDelay);
     
     logConnectionState('reconnecting', `attempt ${retryCount + 1}/${maxRetries} in ${delay}ms`);
     
@@ -606,15 +607,16 @@ export const usePusher = () => {
       cleanupTimeoutRef.current = null;
     }
     
+    const initDelay = process.env.NODE_ENV === 'production' ? 2000 : 1000;
     const initTimer = setTimeout(() => {
       // 현재 초기화 ID가 여전히 유효한지 확인 (React Strict Mode 방지)
       if (initializationIdRef.current === initId && 
           componentMountedRef.current && 
           !isInitializedRef.current) {
         
-        // 개발 환경에서는 disconnecting 상태를 더 관대하게 처리
-        if (process.env.NODE_ENV === 'development' && isDisconnectingRef.current) {
-          logConnectionState('component_mount', 'dev mode - forcing reset of disconnecting state');
+        // 연결 해제 상태를 더 관대하게 처리 (환경 무관)
+        if (isDisconnectingRef.current) {
+          logConnectionState('component_mount', 'forcing reset of disconnecting state for stability');
           isDisconnectingRef.current = false;
         }
         
@@ -627,7 +629,7 @@ export const usePusher = () => {
       } else {
         logConnectionState('component_mount', `skipped - initialization cancelled (${initId} vs ${initializationIdRef.current})`);
       }
-    }, 1000);
+    }, initDelay);
 
     return () => {
       // 초기화 ID 무효화
@@ -639,20 +641,17 @@ export const usePusher = () => {
       componentMountedRef.current = false;
       clearTimeout(initTimer);
       
-      // React Strict Mode를 고려한 지연 정리
-      if (process.env.NODE_ENV === 'development') {
-        cleanupTimeoutRef.current = setTimeout(() => {
-          // 다른 컴포넌트 인스턴스가 초기화되지 않았다면 정리 진행
-          if (!componentMountedRef.current && !isInitializedRef.current) {
-            logConnectionState('cleanup_delayed', `proceeding with cleanup (${initId})`);
-            cleanupPusher();
-          } else {
-            logConnectionState('cleanup_cancelled', `cleanup cancelled - component remounted (${initId})`);
-          }
-        }, 2000); // 2초 지연
-      } else {
-        cleanupPusher();
-      }
+      // 환경에 관계없이 지연된 정리로 안정성 확보
+      const cleanupDelay = process.env.NODE_ENV === 'production' ? 3000 : 2000;
+      cleanupTimeoutRef.current = setTimeout(() => {
+        // 다른 컴포넌트 인스턴스가 초기화되지 않았다면 정리 진행
+        if (!componentMountedRef.current && !isInitializedRef.current) {
+          logConnectionState('cleanup_delayed', `proceeding with cleanup (${initId})`);
+          cleanupPusher();
+        } else {
+          logConnectionState('cleanup_cancelled', `cleanup cancelled - component remounted (${initId})`);
+        }
+      }, cleanupDelay);
     };
   }, [initializePusher, cleanupPusher, logConnectionState]);
 

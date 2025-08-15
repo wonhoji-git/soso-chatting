@@ -42,13 +42,13 @@ export default function Home() {
 
   if (step === 'avatar') {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <div className="max-w-6xl w-full">
-          <div className="text-center mb-8">
-            <h1 className="text-5xl font-bold text-white mb-4 drop-shadow-lg animate-bounce-gentle">
+      <div className="min-h-screen flex items-center justify-center p-4 lg:p-8">
+        <div className="max-w-6xl w-full lg:max-w-7xl xl:max-w-none">
+          <div className="text-center mb-8 lg:mb-12">
+            <h1 className="text-3xl md:text-5xl lg:text-6xl xl:text-7xl font-bold text-white mb-4 drop-shadow-lg animate-bounce-gentle">
               🎉 소소 채팅방에 오신 것을 환영합니다! 🎉
             </h1>
-            <p className="text-xl text-white/90 drop-shadow-lg">
+            <p className="text-lg md:text-xl lg:text-2xl xl:text-3xl text-white/90 drop-shadow-lg">
               귀여운 캐릭터들과 함께 즐거운 대화를 나누어보세요!
             </p>
           </div>
@@ -60,13 +60,13 @@ export default function Home() {
 
   if (step === 'name') {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <div className="max-w-2xl w-full">
-          <div className="text-center mb-8">
-            <h1 className="text-4xl font-bold text-white mb-4 drop-shadow-lg">
+      <div className="min-h-screen flex items-center justify-center p-4 lg:p-8">
+        <div className="max-w-2xl w-full lg:max-w-4xl">
+          <div className="text-center mb-8 lg:mb-12">
+            <h1 className="text-3xl md:text-4xl lg:text-5xl xl:text-6xl font-bold text-white mb-4 drop-shadow-lg">
               🎯 마지막 단계입니다! 🎯
             </h1>
-            <p className="text-lg text-white/90 drop-shadow-lg">
+            <p className="text-base md:text-lg lg:text-xl xl:text-2xl text-white/90 drop-shadow-lg">
               선택한 캐릭터: {selectedAvatar.split('/').pop()?.replace('.jpg', '')}
             </p>
           </div>

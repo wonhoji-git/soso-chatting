@@ -24,19 +24,29 @@
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
   }
+  
+  /* Desktop body enhancements */
+  @media (min-width: 1024px) {
+    body {
+      background: linear-gradient(135deg, #FFB6C1 0%, #87CEEB 50%, #DDA0DD 100%);
+      background-attachment: fixed;
+      padding: 0;
+      overflow-x: hidden;
+    }
+  }
 }
 
 @layer components {
   .chat-bubble {
-    @apply rounded-2xl px-4 py-2 max-w-xs break-words;
+    @apply rounded-2xl px-4 py-2 max-w-xs lg:max-w-sm xl:max-w-md break-words;
   }
   
   .chat-bubble.sent {
-    @apply bg-blue-400 text-white ml-auto;
+    @apply bg-blue-400 text-white ml-auto shadow-lg lg:shadow-xl;
   }
   
   .chat-bubble.received {
-    @apply bg-white text-gray-800 mr-auto;
+    @apply bg-white text-gray-800 mr-auto shadow-lg lg:shadow-xl;
   }
   
   .avatar-selection {
@@ -105,7 +115,7 @@
     animation: shimmer 2s infinite;
   }
 
-  /* 스크롤바 스타일링 */
+  /* 모바일 스크롤바 스타일링 */
   .overflow-y-auto::-webkit-scrollbar {
     width: 6px;
   }
@@ -124,12 +134,42 @@
     background: rgba(255, 255, 255, 0.5);
   }
 
-  /* Mobile-specific styles */
+  /* Responsive chat container styles */
   .mobile-chat-container {
     height: 100vh;
     height: -webkit-fill-available;
     display: flex;
     flex-direction: column;
+  }
+  
+  /* Desktop optimizations */
+  @media (min-width: 1024px) {
+    .mobile-chat-container {
+      height: calc(100vh - 2rem);
+      max-height: 900px;
+      border-radius: 24px;
+      overflow: hidden;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+      /* Ensure proper flex layout for desktop */
+      display: flex;
+      flex-direction: row;
+    }
+    
+    /* Desktop chat area improvements */
+    .mobile-chat-container > div:last-child {
+      flex: 1;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+  }
+  
+  /* Ultra-wide desktop optimizations */
+  @media (min-width: 1536px) {
+    .mobile-chat-container {
+      max-height: 1000px;
+    }
   }
 
   .mobile-chat-messages {
@@ -146,11 +186,33 @@
     /* Prevent zoom on input focus for iOS */
     font-size: 16px;
   }
+  
+  /* Desktop input area improvements */
+  @media (min-width: 1024px) {
+    .mobile-input-area {
+      padding-bottom: 0;
+      font-size: 18px;
+    }
+  }
 
   /* Touch targets should be at least 44px for accessibility */
   .mobile-touch-target {
     min-height: 44px;
     min-width: 44px;
+  }
+  
+  /* Desktop hover enhancements */
+  @media (min-width: 1024px) {
+    .mobile-touch-target {
+      min-height: 48px;
+      min-width: 48px;
+      transition: all 0.2s ease;
+    }
+    
+    .mobile-touch-target:hover {
+      transform: scale(1.05);
+      filter: brightness(1.1);
+    }
   }
 
   /* Fix for iOS Safari address bar */
@@ -173,6 +235,66 @@
   @media (prefers-contrast: high) {
     .chat-bubble {
       border: 2px solid currentColor;
+    }
+  }
+  
+  /* Desktop-specific enhancements */
+  @media (min-width: 1024px) {
+    /* Enhanced scrollbar for desktop */
+    .overflow-y-auto::-webkit-scrollbar {
+      width: 12px;
+    }
+    
+    .overflow-y-auto::-webkit-scrollbar-track {
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 6px;
+    }
+    
+    .overflow-y-auto::-webkit-scrollbar-thumb {
+      background: linear-gradient(45deg, #ec4899, #8b5cf6);
+      border-radius: 6px;
+      border: 2px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    .overflow-y-auto::-webkit-scrollbar-thumb:hover {
+      background: linear-gradient(45deg, #db2777, #7c3aed);
+    }
+    
+    /* Desktop typography improvements */
+    body {
+      font-size: 16px;
+      line-height: 1.6;
+    }
+    
+    /* Enhanced hover effects for desktop */
+    .transition-all:hover {
+      transition-duration: 0.2s;
+    }
+    
+    /* Desktop-specific gradient backgrounds */
+    .bg-gradient-to-br {
+      background-size: 120% 120%;
+      animation: gradient-shift 8s ease infinite;
+    }
+    
+    @keyframes gradient-shift {
+      0%, 100% {
+        background-position: 0% 50%;
+      }
+      50% {
+        background-position: 100% 50%;
+      }
+    }
+  }
+  
+  /* Large desktop optimizations */
+  @media (min-width: 1536px) {
+    body {
+      font-size: 18px;
+    }
+    
+    .mobile-chat-container {
+      max-width: 1400px;
     }
   }
 }
