@@ -7,6 +7,7 @@ import { User, Message, ConnectionStatus } from '@/types/chat';
 import { usePusherContext } from '@/contexts/PusherContext';
 import { TypingIndicator } from './TypingIndicator';
 import { NotificationSettings } from './NotificationSettings';
+import { useMobileErrorTracking } from '@/hooks/useMobileErrorTracking';
 
 interface ChatRoomProps {
   currentUser: User;
@@ -64,6 +65,14 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
     requestNotificationPermission,
     updateNotificationSettings
   } = usePusherContext();
+
+  // 모바일 에러 트래킹 활성화
+  const { sendErrorLog } = useMobileErrorTracking({
+    trackNetworkErrors: true,
+    trackViewportChanges: true,
+    trackTouchErrors: true,
+    trackPerformanceIssues: true
+  });
 
   // 현재 사용자를 제외한 다른 사용자들만 필터링
   const otherUsers = onlineUsers.filter(user => user.id !== currentUser.id);
@@ -270,6 +279,31 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
         console.log('✅ Message sent successfully');
       } catch (error) {
         console.error('❌ Failed to send message:', error);
+        
+        // 에러를 디버깅 서버로 전송
+        if (error instanceof Error) {
+          fetch('/api/debug/error', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: `send-error-${Date.now()}`,
+              timestamp: new Date().toISOString(),
+              level: 'error',
+              message: `Message send failed: ${error.message}`,
+              data: {
+                errorName: error.name,
+                errorStack: error.stack,
+                messageLength: newMessage.trim().length,
+                isConnected,
+                connectionStatus,
+                currentUser: currentUser.id,
+                userAgent: navigator.userAgent
+              },
+              userAgent: navigator.userAgent,
+              url: window.location.href
+            })
+          }).catch(console.error);
+        }
         
         // 모바일 환경 감지
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);

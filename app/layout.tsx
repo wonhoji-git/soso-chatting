@@ -2,6 +2,8 @@
 import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
+import ErrorBoundary from '@/components/ErrorBoundary'
+import MobileDebugger from '@/components/MobileDebugger'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -31,7 +33,12 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         <meta name="apple-mobile-web-app-title" content="소소 채팅방" />
       </head>
-      <body className={inter.className}>{children}</body>
+      <body className={inter.className}>
+        <ErrorBoundary>
+          {children}
+          <MobileDebugger />
+        </ErrorBoundary>
+      </body>
     </html>
   )
 }
