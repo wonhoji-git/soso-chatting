@@ -276,30 +276,94 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
     setTimeout(() => setSidebarAnimation('idle'), 300);
   };
 
-  // 연결 상태에 따른 표시 텍스트와 색상
+  // 연결 상태에 따른 표시 텍스트와 색상 (개선된 버전)
   const getConnectionDisplay = () => {
+    // isConnected와 connectionStatus를 모두 고려
+    const isActuallyConnected = isConnected && connectionStatus === 'connected';
+    
+    if (isActuallyConnected) {
+      return { 
+        text: '연결됨', 
+        color: 'bg-green-500', 
+        bgColor: 'bg-green-100', 
+        textColor: 'text-green-800',
+        icon: '🟢'
+      };
+    }
+    
     switch (connectionStatus) {
       case 'connecting':
-        return { text: '연결 중...', color: 'bg-yellow-500', bgColor: 'bg-yellow-100', textColor: 'text-yellow-800' };
+        return { 
+          text: '연결 중...', 
+          color: 'bg-yellow-500', 
+          bgColor: 'bg-yellow-100', 
+          textColor: 'text-yellow-800',
+          icon: '🟡'
+        };
       case 'connected':
-        return { text: '연결됨', color: 'bg-green-500', bgColor: 'bg-green-100', textColor: 'text-green-800' };
+        // isConnected가 false인 경우 - 상태 불일치
+        return { 
+          text: '상태 확인 중...', 
+          color: 'bg-blue-500', 
+          bgColor: 'bg-blue-100', 
+          textColor: 'text-blue-800',
+          icon: '🔵'
+        };
       case 'disconnected':
-        return { text: '연결 끊김', color: 'bg-orange-500', bgColor: 'bg-orange-100', textColor: 'text-orange-800' };
+        return { 
+          text: '연결 끊김', 
+          color: 'bg-orange-500', 
+          bgColor: 'bg-orange-100', 
+          textColor: 'text-orange-800',
+          icon: '🟠'
+        };
       case 'failed':
-        return { text: '연결 실패', color: 'bg-red-500', bgColor: 'bg-red-100', textColor: 'text-red-800' };
+        return { 
+          text: '연결 실패', 
+          color: 'bg-red-500', 
+          bgColor: 'bg-red-100', 
+          textColor: 'text-red-800',
+          icon: '🔴'
+        };
       default:
-        return { text: '연결 중...', color: 'bg-gray-500', bgColor: 'bg-gray-100', textColor: 'text-gray-800' };
+        return { 
+          text: '초기화 중...', 
+          color: 'bg-gray-500', 
+          bgColor: 'bg-gray-100', 
+          textColor: 'text-gray-800',
+          icon: '⚪'
+        };
     }
   };
 
   const connectionDisplay = getConnectionDisplay();
 
+  // 연결 상태 디버깅 (개발 환경에서만)
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔗 Connection state update:', {
+        isConnected,
+        connectionStatus,
+        currentTransport: getCurrentTransport(),
+        connectionState: getConnectionState(),
+        displayText: connectionDisplay.text,
+        displayIcon: connectionDisplay.icon,
+        timestamp: new Date().toLocaleTimeString()
+      });
+    }
+  }, [isConnected, connectionStatus, connectionDisplay, getCurrentTransport, getConnectionState]);
+
   return (
     <div 
-      className="flex h-screen bg-gradient-to-br from-pink-200 via-purple-200 to-indigo-300 relative overflow-hidden"
+      className="flex mobile-chat-container bg-gradient-to-br from-pink-200 via-purple-200 to-indigo-300 relative overflow-hidden"
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
+      style={{
+        // Fix for iPhone viewport issues
+        minHeight: '-webkit-fill-available',
+        height: '-webkit-fill-available'
+      }}
     >
       {/* 떠다니는 배경 요소들 */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
@@ -359,7 +423,11 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
             {/* 상단 플로팅 버튼 - 향상된 접근성 */}
             <button
               onClick={toggleSidebar}
-              className="fixed top-20 left-4 z-30 p-3 bg-gradient-to-r from-pink-400 to-purple-500 text-white rounded-full shadow-2xl hover:from-pink-500 hover:to-purple-600 transition-all duration-300 transform hover:scale-110 animate-pulse active:scale-95 focus:ring-4 focus:ring-pink-300"
+              className="fixed top-20 left-4 z-30 mobile-touch-target p-4 bg-gradient-to-r from-pink-400 to-purple-500 text-white rounded-full shadow-2xl hover:from-pink-500 hover:to-purple-600 transition-all duration-300 transform hover:scale-110 animate-pulse active:scale-95 focus:ring-4 focus:ring-pink-300"
+              style={{
+                top: 'max(5rem, calc(env(safe-area-inset-top) + 1rem))',
+                left: 'max(1rem, env(safe-area-inset-left))'
+              }}
               aria-label={`친구 목록 열기 (총 ${totalUserCount}명 온라인)`}
             >
               <div className="flex items-center space-x-1">
@@ -420,25 +488,33 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
       </div>
 
       {/* 사이드바 - 접속자 정보 (향상된 애니메이션) */}
-      <div className={`
-        ${showSidebar ? 'translate-x-0' : '-translate-x-full'} 
-        md:translate-x-0 
-        fixed md:static 
-        top-0 left-0 
-        w-80 md:w-64 
-        h-full 
-        bg-gradient-to-b from-pink-100 via-purple-50 to-blue-100 backdrop-blur-sm 
-        p-4 
-        shadow-2xl 
-        transition-all duration-300 ease-in-out 
-        z-50 md:z-auto
-        overflow-y-auto
-        border-r-4 border-pink-300
-        ${
-          sidebarAnimation === 'opening' ? 'animate-in slide-in-from-left' :
-          sidebarAnimation === 'closing' ? 'animate-out slide-out-to-left' : ''
-        }
-      `}>
+      <div 
+        className={`
+          ${showSidebar ? 'translate-x-0' : '-translate-x-full'} 
+          md:translate-x-0 
+          fixed md:static 
+          top-0 left-0 
+          w-80 md:w-64 
+          h-full 
+          bg-gradient-to-b from-pink-100 via-purple-50 to-blue-100 backdrop-blur-sm 
+          p-4 
+          shadow-2xl 
+          transition-all duration-300 ease-in-out 
+          z-50 md:z-auto
+          overflow-y-auto
+          border-r-4 border-pink-300
+          ${
+            sidebarAnimation === 'opening' ? 'animate-in slide-in-from-left' :
+            sidebarAnimation === 'closing' ? 'animate-out slide-out-to-left' : ''
+          }
+        `}
+        style={{
+          // Safe area padding for mobile
+          paddingTop: 'max(1rem, env(safe-area-inset-top))',
+          paddingBottom: 'max(1rem, env(safe-area-inset-bottom))',
+          height: '-webkit-fill-available'
+        }}
+      >
         {/* 사이드바 헤더 */}
         <div className="flex items-center justify-between mb-6 md:block">
           <div className="text-center">
@@ -446,6 +522,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
               🌟 친구들 🌟
             </h2>
             <div className="flex items-center justify-center mt-2 bg-white/50 rounded-full px-3 py-1">
+              <span className="text-sm mr-1">{connectionDisplay.icon}</span>
               <div className={`w-3 h-3 rounded-full ${connectionDisplay.color} animate-pulse`}></div>
               <span className={`text-xs ml-2 ${connectionDisplay.textColor} font-bold`}>
                 {connectionDisplay.text}
@@ -465,7 +542,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
               setShowSidebar(false);
               setTimeout(() => setSidebarAnimation('idle'), 300);
             }}
-            className="md:hidden p-3 bg-gradient-to-r from-red-400 to-pink-500 text-white rounded-full shadow-lg hover:from-red-500 hover:to-pink-600 transition-all transform hover:scale-110 active:scale-95 focus:ring-4 focus:ring-red-300 animate-pulse"
+            className="md:hidden mobile-touch-target p-4 bg-gradient-to-r from-red-400 to-pink-500 text-white rounded-full shadow-lg hover:from-red-500 hover:to-pink-600 transition-all transform hover:scale-110 active:scale-95 focus:ring-4 focus:ring-red-300 animate-pulse"
             aria-label="친구 목록 닫기"
           >
             <span className="text-lg">❌</span>
@@ -568,15 +645,22 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
       </div>
 
       {/* 메인 채팅 영역 */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 mobile-chat-container">
         {/* 헤더 */}
-        <div className="bg-gradient-to-r from-pink-100 via-purple-100 to-blue-100 backdrop-blur-sm p-3 md:p-4 shadow-xl border-b-4 border-pink-300">
+        <div 
+          className="bg-gradient-to-r from-pink-100 via-purple-100 to-blue-100 backdrop-blur-sm p-3 md:p-4 shadow-xl border-b-4 border-pink-300"
+          style={{
+            paddingTop: 'max(0.75rem, env(safe-area-inset-top))',
+            paddingLeft: 'max(0.75rem, env(safe-area-inset-left))',
+            paddingRight: 'max(0.75rem, env(safe-area-inset-right))'
+          }}
+        >
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3 min-w-0 flex-1">
               {/* 모바일 메뉴 버튼 - 향상된 UX */}
               <button
                 onClick={toggleSidebar}
-                className="md:hidden p-2 text-pink-600 hover:text-pink-800 rounded-2xl hover:bg-pink-200 transition-all transform hover:scale-110 active:scale-95 focus:ring-4 focus:ring-pink-300 relative"
+                className="md:hidden mobile-touch-target p-3 text-pink-600 hover:text-pink-800 rounded-2xl hover:bg-pink-200 transition-all transform hover:scale-110 active:scale-95 focus:ring-4 focus:ring-pink-300 relative"
                 aria-label={showSidebar ? '친구 목록 닫기' : '친구 목록 열기'}
               >
                 <div className="text-2xl relative">
@@ -611,6 +695,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
 
             {/* 접속자 수 표시 (모바일용) */}
             <div className="md:hidden flex items-center space-x-1 bg-gradient-to-r from-yellow-200 to-pink-200 px-3 py-2 rounded-full border-2 border-pink-300 shadow-lg">
+              <span className="text-xs mr-1">{connectionDisplay.icon}</span>
               <div className={`w-3 h-3 rounded-full ${connectionDisplay.color} animate-pulse`}></div>
               <span className="text-xs font-bold text-purple-700">
                 👥 {totalUserCount}명 {otherUsers.length > 0 ? `(+${otherUsers.length})` : ''}
@@ -620,7 +705,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
         </div>
 
         {/* 메시지 영역 */}
-        <div className="flex-1 p-3 md:p-4 overflow-y-auto space-y-3 md:space-y-4 relative">
+        <div className="flex-1 p-3 md:p-4 mobile-chat-messages space-y-3 md:space-y-4 relative">
           {/* 배경 패턴 */}
           <div className="absolute inset-0 opacity-5 pointer-events-none">
             <div className="absolute top-10 left-10 text-6xl">🌟</div>
@@ -683,14 +768,21 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
 
         {/* 이모지 선택기 */}
         {showEmojiPicker && (
-          <div className="bg-gradient-to-r from-pink-100 to-purple-100 p-3 border-t-2 border-pink-300">
-            <div className="grid grid-cols-8 gap-2 max-h-32 overflow-y-auto">
+          <div 
+            className="bg-gradient-to-r from-pink-100 to-purple-100 p-3 border-t-2 border-pink-300"
+            style={{
+              paddingLeft: 'max(0.75rem, env(safe-area-inset-left))',
+              paddingRight: 'max(0.75rem, env(safe-area-inset-right))'
+            }}
+          >
+            <div className="grid grid-cols-8 gap-2 max-h-32 overflow-y-auto -webkit-overflow-scrolling-touch">
               {popularEmojis.map((emoji, index) => (
                 <button
                   key={emoji}
                   onClick={() => handleEmojiSelect(emoji)}
-                  className="text-2xl p-2 rounded-xl hover:bg-white/70 transition-all transform hover:scale-110 active:scale-95"
+                  className="mobile-touch-target text-2xl p-2 rounded-xl hover:bg-white/70 transition-all transform hover:scale-110 active:scale-95"
                   style={{animationDelay: `${index * 0.05}s`}}
+                  aria-label={`이모지 ${emoji} 선택`}
                 >
                   {emoji}
                 </button>
@@ -700,13 +792,21 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
         )}
 
         {/* 메시지 입력 */}
-        <div className="bg-gradient-to-r from-pink-100 via-purple-100 to-blue-100 p-3 md:p-4 shadow-xl border-t-4 border-pink-300">
+        <div 
+          className="bg-gradient-to-r from-pink-100 via-purple-100 to-blue-100 p-3 md:p-4 shadow-xl border-t-4 border-pink-300 mobile-input-area"
+          style={{
+            paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))',
+            paddingLeft: 'max(0.75rem, env(safe-area-inset-left))',
+            paddingRight: 'max(0.75rem, env(safe-area-inset-right))'
+          }}
+        >
           <form onSubmit={handleSendMessage} className="flex space-x-2 md:space-x-3">
             <button
               type="button"
               onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-              className="p-2 md:p-3 text-2xl hover:bg-pink-200 rounded-2xl transition-all transform hover:scale-110 active:scale-95 flex-shrink-0"
+              className="mobile-touch-target p-3 text-2xl hover:bg-pink-200 rounded-2xl transition-all transform hover:scale-110 active:scale-95 flex-shrink-0"
               disabled={!isConnected}
+              aria-label={showEmojiPicker ? '이모지 선택기 닫기' : '이모지 선택기 열기'}
             >
               {showEmojiPicker ? '🎭' : '😊'}
             </button>
@@ -716,15 +816,18 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
               onChange={(e) => setNewMessage(e.target.value)}
               onKeyPress={handleKeyPress}
               placeholder={isConnected ? "재미있는 메시지를 써보세요! 🎉" : "연결을 기다리는 중... 🔄"}
-              className="flex-1 px-3 md:px-4 py-2 md:py-3 rounded-2xl border-3 border-pink-300 focus:border-purple-400 focus:outline-none font-medium disabled:opacity-50 text-sm md:text-base bg-white/80 placeholder-purple-400"
+              className="flex-1 px-3 md:px-4 py-3 md:py-4 rounded-2xl border-3 border-pink-300 focus:border-purple-400 focus:outline-none font-medium disabled:opacity-50 text-base bg-white/80 placeholder-purple-400 mobile-input-area"
+              style={{ fontSize: '16px' }} // Prevents zoom on iOS
               maxLength={200}
               disabled={!isConnected}
               autoComplete="off"
+              enterKeyHint="send"
             />
             <button
               type="submit"
               disabled={!newMessage.trim() || !isConnected}
-              className="px-4 md:px-6 py-2 md:py-3 bg-gradient-to-r from-pink-400 to-purple-500 text-white font-bold rounded-2xl hover:from-pink-500 hover:to-purple-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 text-sm md:text-base flex-shrink-0 shadow-lg transform hover:scale-105 active:scale-95"
+              className="mobile-touch-target px-4 md:px-6 py-3 md:py-4 bg-gradient-to-r from-pink-400 to-purple-500 text-white font-bold rounded-2xl hover:from-pink-500 hover:to-purple-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 text-sm md:text-base flex-shrink-0 shadow-lg transform hover:scale-105 active:scale-95"
+              aria-label="메시지 보내기"
             >
               <span className="hidden sm:inline">보내기! 🚀</span>
               <span className="sm:hidden">🚀</span>

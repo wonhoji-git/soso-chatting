@@ -17,6 +17,7 @@ export const usePusher = () => {
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const syncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const connectionCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isDisconnectingRef = useRef<boolean>(false);
   const connectionAttemptsRef = useRef<number>(0);
   const isInitializedRef = useRef<boolean>(false);
@@ -26,6 +27,7 @@ export const usePusher = () => {
   const retryDelay = 2000;
   const heartbeatInterval = 30000; // 30초
   const syncInterval = 60000; // 1분
+  const connectionCheckInterval = 5000; // 5초 - 연결 상태 확인
 
   // 중복 사용자 체크 함수
   const isUserAlreadyOnline = useCallback((userId: string) => {
@@ -114,6 +116,49 @@ export const usePusher = () => {
     }
   }, [isConnected]);
 
+  // 연결 상태 실시간 확인
+  const checkConnectionStatus = useCallback(() => {
+    if (!pusherRef.current) return;
+    
+    const actualState = pusherRef.current.connection.state;
+    console.log('🔍 Real-time connection check:', {
+      actualPusherState: actualState,
+      localIsConnected: isConnected,
+      localConnectionStatus: connectionStatus
+    });
+    
+    // 실제 Pusher 상태와 로컬 상태가 다른 경우 동기화
+    if (actualState === 'connected' && (!isConnected || connectionStatus !== 'connected')) {
+      console.log('⚡ Fixing connection status: actualState=connected but local state incorrect');
+      setConnectionStatus('connected');
+      setIsConnected(true);
+      setRetryCount(0);
+      setLastError(null);
+      connectionAttemptsRef.current = 0;
+      isDisconnectingRef.current = false;
+      
+      // 연결된 상태에서 주기적 작업이 중지되어 있다면 시작
+      if (!heartbeatIntervalRef.current || !syncIntervalRef.current) {
+        startPeriodicTasks();
+        setTimeout(syncWithServer, 1000);
+      }
+    } else if (actualState === 'connecting' && connectionStatus !== 'connecting') {
+      console.log('⚡ Fixing connection status: actualState=connecting');
+      setConnectionStatus('connecting');
+      setLastError(null);
+    } else if (actualState === 'disconnected' && isConnected) {
+      console.log('⚡ Fixing connection status: actualState=disconnected but local isConnected=true');
+      setConnectionStatus('disconnected');
+      setIsConnected(false);
+      stopPeriodicTasks();
+    } else if (actualState === 'failed' && connectionStatus !== 'failed') {
+      console.log('⚡ Fixing connection status: actualState=failed');
+      setConnectionStatus('failed');
+      setIsConnected(false);
+      stopPeriodicTasks();
+    }
+  }, [isConnected, connectionStatus, syncWithServer]);
+
   // 하트비트 및 동기화 시작
   const startPeriodicTasks = useCallback(() => {
     // 하트비트 타이머
@@ -135,7 +180,17 @@ export const usePusher = () => {
         syncWithServer();
       }
     }, syncInterval);
-  }, [isConnected, sendHeartbeat, syncWithServer]);
+
+    // 연결 상태 확인 타이머
+    if (connectionCheckIntervalRef.current) {
+      clearInterval(connectionCheckIntervalRef.current);
+    }
+    connectionCheckIntervalRef.current = setInterval(() => {
+      checkConnectionStatus();
+    }, connectionCheckInterval);
+    
+    console.log('🚀 Started all periodic tasks (heartbeat, sync, connection check)');
+  }, [isConnected, sendHeartbeat, syncWithServer, checkConnectionStatus]);
 
   // 주기적 작업 중지
   const stopPeriodicTasks = useCallback(() => {
@@ -146,6 +201,10 @@ export const usePusher = () => {
     if (syncIntervalRef.current) {
       clearInterval(syncIntervalRef.current);
       syncIntervalRef.current = null;
+    }
+    if (connectionCheckIntervalRef.current) {
+      clearInterval(connectionCheckIntervalRef.current);
+      connectionCheckIntervalRef.current = null;
     }
   }, []);
 
@@ -201,7 +260,7 @@ export const usePusher = () => {
 
       logConnectionState('pusher_instance_obtained', `singleton instance obtained successfully (reused: ${isReused})`);
 
-      // 기존 연결 상태 확인 및 설정
+      // 기존 연결 상태 확인 및 설정 (강화된 버전)
       const currentState = pusher.connection.state;
       console.log('🔍 Current connection state:', currentState);
       
@@ -213,6 +272,12 @@ export const usePusher = () => {
         connectionAttemptsRef.current = 0;
         isDisconnectingRef.current = false;
         logConnectionState('connection_state_sync', 'synced with existing connected state');
+        
+        // 연결된 상태면 즉시 주기적 작업 시작
+        setTimeout(() => {
+          startPeriodicTasks();
+          syncWithServer();
+        }, 500);
       } else if (currentState === 'connecting') {
         setConnectionStatus('connecting');
         setIsConnected(false);
@@ -422,6 +487,11 @@ export const usePusher = () => {
       } else {
         console.log('🔄 Skipping event binding for reused instance');
         logConnectionState('initialize_complete', 'reused instance setup completed');
+        
+        // 재사용된 인스턴스의 경우 연결 상태를 강제로 다시 확인
+        setTimeout(() => {
+          checkConnectionStatus();
+        }, 1000);
       }
 
     } catch (error) {
@@ -435,7 +505,7 @@ export const usePusher = () => {
         attemptReconnect();
       }
     }
-  }, [isUserAlreadyOnline, logConnectionState, startPeriodicTasks, syncWithServer, stopPeriodicTasks]);
+  }, [isUserAlreadyOnline, logConnectionState, startPeriodicTasks, syncWithServer, stopPeriodicTasks, checkConnectionStatus]);
 
   // 재연결 함수 (개선)
   const attemptReconnect = useCallback(() => {

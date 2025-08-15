@@ -3,10 +3,26 @@
 @tailwind utilities;
 
 @layer base {
+  html {
+    /* Fix for mobile viewport height issues */
+    height: 100%;
+    height: -webkit-fill-available;
+  }
+  
   body {
     font-family: 'Comic Sans MS', cursive;
     background: linear-gradient(135deg, #FFB6C1 0%, #87CEEB 100%);
     min-height: 100vh;
+    min-height: -webkit-fill-available;
+    /* Prevent zoom on iOS */
+    -webkit-text-size-adjust: 100%;
+    /* Smooth scrolling on iOS */
+    -webkit-overflow-scrolling: touch;
+    /* Safe area padding for iPhone X+ */
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
   }
 }
 
@@ -106,5 +122,57 @@
 
   .overflow-y-auto::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.5);
+  }
+
+  /* Mobile-specific styles */
+  .mobile-chat-container {
+    height: 100vh;
+    height: -webkit-fill-available;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .mobile-chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    /* Prevent pull-to-refresh on iOS */
+    overscroll-behavior-y: contain;
+  }
+
+  .mobile-input-area {
+    /* Account for virtual keyboard on mobile */
+    padding-bottom: env(keyboard-inset-height, 0px);
+    /* Prevent zoom on input focus for iOS */
+    font-size: 16px;
+  }
+
+  /* Touch targets should be at least 44px for accessibility */
+  .mobile-touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Fix for iOS Safari address bar */
+  @supports (-webkit-touch-callout: none) {
+    .mobile-chat-container {
+      height: -webkit-fill-available;
+    }
+  }
+
+  /* Reduce motion for users who prefer it */
+  @media (prefers-reduced-motion: reduce) {
+    .animate-bounce,
+    .animate-pulse,
+    .animate-spin {
+      animation: none;
+    }
+  }
+
+  /* High contrast mode support */
+  @media (prefers-contrast: high) {
+    .chat-bubble {
+      border: 2px solid currentColor;
+    }
   }
 }
