@@ -97,8 +97,37 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
   }, [onlineUsers, currentUser, otherUsers, totalUserCount]);
 
   const scrollToBottom = useCallback((force = false) => {
+    const container = messagesContainerRef.current;
+    const endElement = messagesEndRef.current;
+    
+    if (!container || !endElement) {
+      console.log('📜 Scroll elements not ready yet');
+      return;
+    }
+    
     if (force || isAtBottom) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      console.log('📜 Scrolling to bottom:', { force, isAtBottom });
+      
+      // 두 가지 방법으로 스크롤 시도 (브라우저 호환성)
+      try {
+        // 방법 1: scrollIntoView 사용
+        endElement.scrollIntoView({ 
+          behavior: 'smooth',
+          block: 'end',
+          inline: 'nearest'
+        });
+        
+        // 방법 2: 직접 스크롤 (백업)
+        setTimeout(() => {
+          container.scrollTop = container.scrollHeight;
+        }, 50);
+        
+      } catch (error) {
+        // 폴백: 직접 스크롤
+        console.log('📜 Using fallback scroll method');
+        container.scrollTop = container.scrollHeight;
+      }
+      
       setShowScrollToBottom(false);
       setUnreadCount(0);
     }
@@ -131,34 +160,64 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
     }
   }, [isAtBottom]);
 
-  // 메시지 변경 시 스크롤 처리
+  // 메시지 변경 시 스크롤 처리 (개선됨)
   useEffect(() => {
-    if (messages.length > prevMessagesLengthRef.current) {
-      // 새 메시지가 추가된 경우
+    const currentMessageCount = messages.length;
+    const previousMessageCount = prevMessagesLengthRef.current;
+    
+    if (currentMessageCount > previousMessageCount) {
+      const newMessagesCount = currentMessageCount - previousMessageCount;
+      console.log('📨 New messages added:', {
+        newCount: newMessagesCount,
+        totalMessages: currentMessageCount,
+        isAtBottom,
+        shouldAutoScroll: isAtBottom
+      });
+      
       if (isAtBottom) {
-        // 사용자가 하단에 있으면 자동 스크롤
-        setTimeout(() => scrollToBottom(false), 100);
+        // 사용자가 하단에 있으면 자동 스크롤 (지연 시간 단축)
+        requestAnimationFrame(() => {
+          setTimeout(() => scrollToBottom(false), 50);
+        });
       } else {
         // 사용자가 위에서 스크롤 중이면 읽지 않은 메시지 카운트 증가
-        const newMessagesCount = messages.length - prevMessagesLengthRef.current;
-        setUnreadCount(prev => prev + newMessagesCount);
+        setUnreadCount(prev => {
+          const newCount = prev + newMessagesCount;
+          console.log('📊 Unread count updated:', { previous: prev, added: newMessagesCount, new: newCount });
+          return newCount;
+        });
       }
     }
     
-    prevMessagesLengthRef.current = messages.length;
+    // 초기 로드 시 자동 스크롤
+    if (previousMessageCount === 0 && currentMessageCount > 0) {
+      console.log('📜 Initial messages loaded, scrolling to bottom');
+      setTimeout(() => scrollToBottom(true), 200);
+    }
+    
+    prevMessagesLengthRef.current = currentMessageCount;
   }, [messages, isAtBottom, scrollToBottom]);
 
-  // 스크롤 이벤트 등록
+  // 스크롤 이벤트 등록 (개선됨)
   useEffect(() => {
     const container = messagesContainerRef.current;
-    if (!container) return;
+    if (!container) {
+      console.log('📜 Container not ready for scroll event registration');
+      return;
+    }
     
+    console.log('📜 Registering scroll event listener');
+    
+    // 스크롤 이벤트 등록 (passive로 성능 최적화)
     container.addEventListener('scroll', handleScroll, { passive: true });
     
-    // 초기 스크롤 상태 확인
-    handleScroll();
+    // 초기 스크롤 상태 확인 (약간의 지연 후)
+    setTimeout(() => {
+      handleScroll();
+    }, 100);
     
     return () => {
+      console.log('📜 Removing scroll event listener');
       container.removeEventListener('scroll', handleScroll);
     };
   }, [handleScroll]);
@@ -964,7 +1023,10 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
           className="flex-1 p-3 md:p-4 lg:p-6 xl:p-8 mobile-chat-messages space-y-3 md:space-y-4 lg:space-y-6 relative overflow-y-auto"
           style={{
             scrollBehavior: 'smooth',
-            overscrollBehavior: 'contain'
+            overscrollBehavior: 'contain',
+            WebkitOverflowScrolling: 'touch', // iOS 모바일 스크롤 최적화
+            scrollbarWidth: 'thin', // Firefox에서 스크롤바 얇게
+            scrollbarColor: '#ec4899 transparent' // Firefox 스크롤바 색상
           }}
         >
           {/* 배경 패턴 - 반응형 크기 */}
@@ -1028,6 +1090,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
           <TypingIndicator 
             typingUsers={typingUsers} 
             showTyping={notificationSettings.typing}
+            currentUserId={currentUser.id}
           />
           
           <div ref={messagesEndRef} />
@@ -1133,11 +1196,12 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
 
                 setNewMessage(newValue);
                 
-                // 메시지 입력 시 자동으로 하단으로 스크롤 (사용자가 입력할 때)
+                // 메시지 입력 시 자동으로 하단으로 스크롤 (사용자가 입력할 때만)
                 if (hasContent && !isAtBottom && messages.length > 0) {
-                  setTimeout(() => {
+                  console.log('📝 User started typing, scrolling to bottom');
+                  requestAnimationFrame(() => {
                     scrollToBottom(true);
-                  }, 100);
+                  });
                 }
                 
                 // 타이핑 시작 (메시지가 있을 때만)

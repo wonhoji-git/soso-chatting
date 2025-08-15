@@ -10,6 +10,26 @@ const inter = Inter({ subsets: ['latin'] })
 export const metadata: Metadata = {
   title: '소소 채팅방 🐱',
   description: '귀여운 캐릭터들과 함께하는 채팅방',
+  manifest: '/manifest.json',
+  icons: {
+    icon: '/images/cat.jpg',
+    apple: '/images/cat.jpg',
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: '소소 채팅방',
+  },
+  formatDetection: {
+    telephone: false,
+  },
+  openGraph: {
+    type: 'website',
+    siteName: '소소 채팅방',
+    title: '소소 채팅방 🐱',
+    description: '귀여운 캐릭터들과 함께하는 실시간 채팅',
+    images: ['/images/cat.jpg'],
+  },
 }
 
 export const viewport: Viewport = {

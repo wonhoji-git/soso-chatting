@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { NotificationSettings as NotificationSettingsType } from '@/types/chat';
-import { getNotificationPermission, isNotificationSupported } from '@/utils/notificationSafety';
+import { getNotificationPermission, isNotificationSupported, getEnhancedNotificationPermission, isPWANotificationSupported } from '@/utils/notificationSafety';
 
 interface NotificationSettingsProps {
   settings: NotificationSettingsType;
@@ -17,14 +17,7 @@ export const NotificationSettings = ({
 }: NotificationSettingsProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const [permissionStatus, setPermissionStatus] = useState<string>(() => {
-    if (isNotificationSupported()) {
-      return getNotificationPermission();
-    }
-    // Service Worker와 Push API가 있다면 부분적 지원으로 간주
-    if (typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window) {
-      return 'partial';
-    }
-    return 'unsupported';
+    return getEnhancedNotificationPermission();
   });
 
   const handlePermissionRequest = async () => {
@@ -43,8 +36,10 @@ export const NotificationSettings = ({
         return '❌ 차단됨';
       case 'default':
         return '❓ 미설정';
+      case 'pwa-supported':
+        return '📱 PWA 지원';
       case 'partial':
-        return '📱 모바일 지원';
+        return '🔄 부분 지원';
       case 'unsupported':
         return '❌ 지원되지 않음';
       default:
@@ -110,7 +105,7 @@ export const NotificationSettings = ({
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      const canUseNotifications = permissionStatus === 'granted' || permissionStatus === 'partial';
+                      const canUseNotifications = permissionStatus === 'granted' || permissionStatus === 'partial' || permissionStatus === 'pwa-supported';
                       if (canUseNotifications) {
                         const newValue = !settings.desktop;
                         console.log('🔧 브라우저 알림 토글 클릭:', {
@@ -123,12 +118,12 @@ export const NotificationSettings = ({
                         console.log('❌ 브라우저 알림 권한이 없어서 토글 불가');
                       }
                     }}
-                    disabled={permissionStatus !== 'granted' && permissionStatus !== 'partial'}
+                    disabled={permissionStatus !== 'granted' && permissionStatus !== 'partial' && permissionStatus !== 'pwa-supported'}
                     className={`relative inline-flex items-center h-6 w-11 rounded-full transition-colors duration-200 ${
                       settings.desktop 
                         ? 'bg-blue-600' 
                         : 'bg-gray-200'
-                    } ${(permissionStatus !== 'granted' && permissionStatus !== 'partial') ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                    } ${(permissionStatus !== 'granted' && permissionStatus !== 'partial' && permissionStatus !== 'pwa-supported') ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
                   >
                     <span 
                       className={`inline-block w-5 h-5 bg-white rounded-full shadow transform transition-transform duration-200 ${
@@ -141,7 +136,7 @@ export const NotificationSettings = ({
               
               <div className="text-xs text-gray-500">
                 브라우저 권한: {getPermissionStatusText()}
-                {(permissionStatus === 'default' || permissionStatus === 'partial') && (
+                {(permissionStatus === 'default' || permissionStatus === 'partial' || permissionStatus === 'pwa-supported') && (
                   <button
                     type="button"
                     onClick={(e) => {

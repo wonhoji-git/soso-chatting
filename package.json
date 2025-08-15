@@ -13,12 +13,14 @@
     "pusher": "^5.2.0",
     "pusher-js": "^8.4.0",
     "react": "^18",
-    "react-dom": "^18"
+    "react-dom": "^18",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "@types/web-push": "^3.6.4",
     "autoprefixer": "^10.0.1",
     "dotenv": "^17.2.1",
     "eslint": "^8",
