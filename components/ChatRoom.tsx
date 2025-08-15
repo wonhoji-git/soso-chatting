@@ -5,6 +5,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import Image from 'next/image';
 import { User, Message, ConnectionStatus } from '@/types/chat';
 import { usePusherContext } from '@/contexts/PusherContext';
+import { TypingIndicator } from './TypingIndicator';
+import { NotificationSettings } from './NotificationSettings';
 
 interface ChatRoomProps {
   currentUser: User;
@@ -40,6 +42,8 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
     connectionStatus, 
     onlineUsers, 
     messages, 
+    typingUsers,
+    notificationSettings,
     sendMessage, 
     joinChat, 
     leaveChat, 
@@ -47,7 +51,11 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
     retryCount,
     cleanupPusher,
     getConnectionState,
-    getCurrentTransport
+    getCurrentTransport,
+    startTyping,
+    stopTyping,
+    requestNotificationPermission,
+    updateNotificationSettings
   } = usePusherContext();
 
   // 현재 사용자를 제외한 다른 사용자들만 필터링
@@ -80,20 +88,29 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
   }, [messages]);
 
   useEffect(() => {
+    console.log('🏠 joinChat useEffect triggered:', {
+      isConnected,
+      hasJoined: hasJoinedRef.current,
+      isUnmounting: isUnmountingRef.current,
+      currentUserId: currentUser.id,
+      shouldJoin: isConnected && !hasJoinedRef.current && !isUnmountingRef.current
+    });
+    
     if (isConnected && !hasJoinedRef.current && !isUnmountingRef.current) {
       const attemptJoin = async () => {
         try {
+          console.log('🚀 Attempting to join chat with user:', currentUser);
           hasJoinedRef.current = true;
           await joinChat(currentUser);
-          console.log('Successfully joined chat');
+          console.log('✅ Successfully joined chat');
         } catch (error) {
-          console.error('Failed to join chat:', error);
+          console.error('❌ Failed to join chat:', error);
           hasJoinedRef.current = false;
           
           // 3초 후 재시도
           setTimeout(() => {
             if (isConnected && !hasJoinedRef.current && !isUnmountingRef.current) {
-              console.log('Retrying to join chat...');
+              console.log('🔄 Retrying to join chat...');
               attemptJoin();
             }
           }, 3000);
@@ -139,6 +156,10 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
         console.log('🚀 Sending message:', newMessage.trim());
         console.log('👤 Current user:', currentUser);
         console.log('🔗 Is connected:', isConnected);
+        
+        // 타이핑 중지
+        stopTyping(currentUser);
+        
         await sendMessage(newMessage.trim(), currentUser);
         setNewMessage('');
         console.log('✅ Message sent successfully');
@@ -449,38 +470,40 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
             {/* 하단 슬라이드 힌트 - 조건부 표시 */}
             {showSwipeHint && (
               <div className="fixed bottom-20 left-0 right-0 z-30 px-4 animate-in slide-in-from-bottom duration-500">
-                <button
-                  onClick={toggleSidebar}
-                  className="w-full bg-gradient-to-r from-pink-300/90 to-purple-300/90 backdrop-blur-md text-purple-700 py-4 px-4 rounded-2xl shadow-lg border-2 border-white/30 transition-all duration-300 transform hover:scale-105 active:scale-95 relative overflow-hidden"
-                  aria-label="친구 목록 열기"
-                >
-                  {/* 배경 반짝임 효과 */}
-                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full animate-[shimmer_2s_infinite]" />
-                  
-                  <div className="flex items-center justify-center space-x-2 relative z-10">
-                    <span className="text-sm animate-bounce delay-100">👈</span>
-                    <div className="text-center">
-                      <div className="text-xs font-bold mb-1">오른쪽으로 밀어서 친구 목록 보기</div>
-                      <div className="text-xs text-purple-600 flex items-center justify-center space-x-1">
-                        <span>또는 여기를 터치하세요!</span>
-                        <span className="animate-bounce">🎈</span>
+                <div className="relative">
+                  <button
+                    onClick={toggleSidebar}
+                    className="w-full bg-gradient-to-r from-pink-300/90 to-purple-300/90 backdrop-blur-md text-purple-700 py-4 px-4 rounded-2xl shadow-lg border-2 border-white/30 transition-all duration-300 transform hover:scale-105 active:scale-95 relative overflow-hidden"
+                    aria-label="친구 목록 열기"
+                  >
+                    {/* 배경 반짝임 효과 */}
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full animate-[shimmer_2s_infinite]" />
+                    
+                    <div className="flex items-center justify-center space-x-2 relative z-10">
+                      <span className="text-sm animate-bounce delay-100">👈</span>
+                      <div className="text-center">
+                        <div className="text-xs font-bold mb-1">오른쪽으로 밀어서 친구 목록 보기</div>
+                        <div className="text-xs text-purple-600 flex items-center justify-center space-x-1">
+                          <span>또는 여기를 터치하세요!</span>
+                          <span className="animate-bounce">🎈</span>
+                        </div>
                       </div>
+                      <span className="text-sm animate-bounce delay-200">🌟</span>
                     </div>
-                    <span className="text-sm animate-bounce delay-200">🌟</span>
-                  </div>
+                  </button>
                   
-                  {/* 닫기 버튼 */}
+                  {/* 닫기 버튼 - 분리됨 */}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       setShowSwipeHint(false);
                     }}
-                    className="absolute top-2 right-2 w-6 h-6 bg-white/80 rounded-full flex items-center justify-center text-purple-600 hover:bg-white transition-colors text-xs"
+                    className="absolute top-2 right-2 w-6 h-6 bg-white/80 rounded-full flex items-center justify-center text-purple-600 hover:bg-white transition-colors text-xs z-20"
                     aria-label="힌트 닫기"
                   >
                     ×
                   </button>
-                </button>
+                </div>
               </div>
             )}
           </>
@@ -648,11 +671,12 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
       <div className="flex-1 flex flex-col min-w-0 lg:max-w-none lg:h-full">
         {/* 헤더 */}
         <div 
-          className="bg-gradient-to-r from-pink-100 via-purple-100 to-blue-100 backdrop-blur-sm p-3 md:p-4 lg:p-6 shadow-xl border-b-4 border-pink-300"
+          className="bg-gradient-to-r from-pink-100 via-purple-100 to-blue-100 backdrop-blur-sm p-3 md:p-4 lg:p-6 shadow-xl border-b-4 border-pink-300 relative"
           style={{
             paddingTop: 'max(0.75rem, env(safe-area-inset-top))',
             paddingLeft: 'max(0.75rem, env(safe-area-inset-left))',
-            paddingRight: 'max(0.75rem, env(safe-area-inset-right))'
+            paddingRight: 'max(0.75rem, env(safe-area-inset-right))',
+            zIndex: 999999
           }}
         >
           <div className="flex items-center justify-between">
@@ -693,13 +717,22 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
               </div>
             </div>
 
-            {/* 접속자 수 표시 (모바일용) */}
-            <div className="md:hidden flex items-center space-x-1 bg-gradient-to-r from-yellow-200 to-pink-200 px-3 py-2 rounded-full border-2 border-pink-300 shadow-lg">
-              <span className="text-xs mr-1">{connectionDisplay.icon}</span>
-              <div className={`w-3 h-3 rounded-full ${connectionDisplay.color} animate-pulse`}></div>
-              <span className="text-xs font-bold text-purple-700">
-                👥 {totalUserCount}명 {otherUsers.length > 0 ? `(+${otherUsers.length})` : ''}
-              </span>
+            <div className="flex items-center space-x-2" style={{zIndex: 1000000}}>
+              {/* 알림 설정 */}
+              <NotificationSettings
+                settings={notificationSettings}
+                onUpdateSettings={updateNotificationSettings}
+                onRequestPermission={requestNotificationPermission}
+              />
+              
+              {/* 접속자 수 표시 (모바일용) */}
+              <div className="md:hidden flex items-center space-x-1 bg-gradient-to-r from-yellow-200 to-pink-200 px-3 py-2 rounded-full border-2 border-pink-300 shadow-lg">
+                <span className="text-xs mr-1">{connectionDisplay.icon}</span>
+                <div className={`w-3 h-3 rounded-full ${connectionDisplay.color} animate-pulse`}></div>
+                <span className="text-xs font-bold text-purple-700">
+                  👥 {totalUserCount}명 {otherUsers.length > 0 ? `(+${otherUsers.length})` : ''}
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -715,7 +748,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
           </div>
 
           {messages.length === 0 && (
-            <div className="text-center text-purple-500 mt-8 lg:mt-12 bg-gradient-to-r from-pink-100 to-purple-100 rounded-2xl p-6 lg:p-8 xl:p-10 border-2 border-dashed border-purple-300">
+            <div className="text-center text-purple-500 mt-8 lg:mt-12 bg-gradient-to-r from-pink-100 to-purple-100 rounded-2xl p-6 lg:p-8 xl:p-10 border-2 border-dashed border-purple-300 relative z-1">
               <div className="text-4xl md:text-6xl lg:text-8xl mb-4 animate-bounce">🎉</div>
               <p className="text-lg md:text-xl lg:text-2xl xl:text-3xl font-bold text-purple-700">첫 번째 메시지를 보내보세요!</p>
               <p className="text-sm md:text-base lg:text-lg mt-2 text-purple-600">친구들과 재미있게 대화해요! 🌈✨</p>
@@ -762,6 +795,12 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
               </div>
             );
           })}
+          
+          {/* 타이핑 표시기 */}
+          <TypingIndicator 
+            typingUsers={typingUsers} 
+            showTyping={notificationSettings.typing}
+          />
           
           <div ref={messagesEndRef} />
         </div>
@@ -813,8 +852,43 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
             <input
               type="text"
               value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
+              onChange={(e) => {
+                const newValue = e.target.value;
+                const hasContent = newValue.trim().length > 0;
+                const previousContent = newMessage.trim().length > 0;
+                
+                console.log('📝 Input onChange:', {
+                  newValue: newValue,
+                  trimmedLength: newValue.trim().length,
+                  isConnected,
+                  previousValue: newMessage,
+                  hasContent,
+                  previousContent,
+                  shouldStartTyping: hasContent && isConnected,
+                  shouldStopTyping: !hasContent && previousContent
+                });
+
+                setNewMessage(newValue);
+                
+                // 타이핑 시작 (메시지가 있을 때만)
+                if (hasContent && isConnected) {
+                  console.log('⌨️ Starting typing due to input change');
+                  startTyping(currentUser).then(() => {
+                    console.log('✅ startTyping completed');
+                  }).catch((error) => {
+                    console.error('❌ startTyping failed:', error);
+                  });
+                } else if (!hasContent) {
+                  console.log('⌨️ Stopping typing due to empty input');
+                  stopTyping(currentUser).then(() => {
+                    console.log('✅ stopTyping completed');
+                  }).catch((error) => {
+                    console.error('❌ stopTyping failed:', error);
+                  });
+                }
+              }}
               onKeyPress={handleKeyPress}
+              onBlur={() => stopTyping(currentUser)}
               placeholder={isConnected ? "재미있는 메시지를 써보세요! 🎉" : "연결을 기다리는 중... 🔄"}
               className="flex-1 px-3 md:px-4 lg:px-6 py-3 md:py-4 lg:py-5 rounded-2xl border-3 border-pink-300 focus:border-purple-400 focus:outline-none font-medium disabled:opacity-50 text-base lg:text-lg bg-white/80 placeholder-purple-400 mobile-input-area"
               style={{ fontSize: '16px' }} // Prevents zoom on iOS

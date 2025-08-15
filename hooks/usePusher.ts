@@ -1,7 +1,7 @@
 // hooks/usePusher.ts
 import { useEffect, useRef, useState, useCallback } from 'react';
 import Pusher from 'pusher-js';
-import { Message, User, ConnectionStatus } from '@/types/chat';
+import { Message, User, ConnectionStatus, TypingUser, NotificationSettings } from '@/types/chat';
 import { getPusherInstance, releasePusherInstance, getPusherStatus } from '@/lib/pusher-singleton';
 
 export const usePusher = () => {
@@ -11,6 +11,27 @@ export const usePusher = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [retryCount, setRetryCount] = useState(0);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [typingUsers, setTypingUsers] = useState<TypingUser[]>([]);
+  const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>(() => {
+    // 로컬 스토리지에서 설정 불러오기
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('chatNotificationSettings');
+        if (saved) {
+          return JSON.parse(saved);
+        }
+      } catch (error) {
+        console.warn('Failed to load notification settings:', error);
+      }
+    }
+    
+    // 기본값
+    return {
+      sound: true,
+      desktop: true,
+      typing: true,
+    };
+  });
 
   const pusherRef = useRef<InstanceType<typeof Pusher> | null>(null);
   const channelRef = useRef<ReturnType<Pusher['subscribe']> | null>(null);
@@ -23,6 +44,9 @@ export const usePusher = () => {
   const isInitializedRef = useRef<boolean>(false);
   const componentMountedRef = useRef<boolean>(false);
   const currentUserRef = useRef<User | null>(null);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const typingCleanupIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isTypingRef = useRef<boolean>(false);
   const maxRetries = process.env.NODE_ENV === 'production' ? 8 : 5;
   const retryDelay = process.env.NODE_ENV === 'production' ? 3000 : 2000;
   const heartbeatInterval = 45000; // 45초
@@ -414,6 +438,19 @@ export const usePusher = () => {
           
           if (!isDuplicate) {
             console.log('✅ Adding message to state');
+            
+            // 다른 사용자의 메시지일 때만 알림 표시
+            if (message.userId !== currentUserRef.current?.id && !message.isSystemMessage) {
+              // 사운드 알림
+              playNotificationSound();
+              
+              // 데스크톱 알림
+              showDesktopNotification(`💬 ${message.userName}`, {
+                body: message.text,
+                tag: 'chat-message',
+              });
+            }
+            
             const newMessages = [...prev, message];
             
             // 메시지 수 제한 (최근 100개만 유지)
@@ -481,6 +518,69 @@ export const usePusher = () => {
           isSystemMessage: true
         };
         setMessages(prev => [...prev, leaveMessage]);
+      });
+
+      // 타이핑 시작 이벤트
+      channel.bind('user-typing', (typingUser: TypingUser) => {
+        console.log('⌨️ RECEIVED user-typing event:', {
+          typingUser,
+          currentUserId: currentUserRef.current?.id,
+          isOwnTyping: typingUser.id === currentUserRef.current?.id,
+          typingSettingEnabled: notificationSettings.typing
+        });
+        
+        // 현재 사용자의 타이핑은 무시
+        if (typingUser.id === currentUserRef.current?.id) {
+          console.log('⚠️ Ignoring own typing event');
+          return;
+        }
+        
+        setTypingUsers(prev => {
+          console.log('📝 Updating typing users state:', {
+            previousUsers: prev.map(u => ({ id: u.id, name: u.name })),
+            newTypingUser: { id: typingUser.id, name: typingUser.name }
+          });
+
+          // 이미 타이핑 중인 사용자는 업데이트만
+          const existingIndex = prev.findIndex(user => user.id === typingUser.id);
+          if (existingIndex >= 0) {
+            console.log('🔄 Updating existing typing user');
+            const updated = [...prev];
+            updated[existingIndex] = typingUser;
+            return updated;
+          }
+          
+          // 새로운 타이핑 사용자 추가
+          console.log('➕ Adding new typing user');
+          const newUsers = [...prev, typingUser];
+          console.log('✅ New typing users state:', newUsers.map(u => ({ id: u.id, name: u.name })));
+          return newUsers;
+        });
+
+        // 타이핑 알림 표시 (설정이 켜져 있을 때)
+        if (notificationSettings.typing) {
+          console.log(`💬 ${typingUser.name}님이 입력 중입니다...`);
+        }
+      });
+
+      // 타이핑 중지 이벤트
+      channel.bind('user-stopped-typing', (data: { userId: string }) => {
+        console.log('⌨️ RECEIVED user-stopped-typing event:', {
+          stoppedUserId: data.userId,
+          currentUserId: currentUserRef.current?.id,
+          isOwnStopTyping: data.userId === currentUserRef.current?.id
+        });
+        
+        setTypingUsers(prev => {
+          console.log('📝 Removing user from typing state:', {
+            previousUsers: prev.map(u => ({ id: u.id, name: u.name })),
+            userToRemove: data.userId
+          });
+
+          const filteredUsers = prev.filter(user => user.id !== data.userId);
+          console.log('✅ Updated typing users after removal:', filteredUsers.map(u => ({ id: u.id, name: u.name })));
+          return filteredUsers;
+        });
       });
 
         logConnectionState('initialize_complete', 'all event bindings and channel setup completed for new instance');
@@ -727,6 +827,11 @@ export const usePusher = () => {
 
       // 현재 사용자 설정
       currentUserRef.current = user;
+      console.log('✅ Current user set in joinChat:', {
+        userId: user.id,
+        userName: user.name,
+        userAvatar: user.avatar
+      });
 
       // 현재 사용자를 로컬에서 제거 (재입장 시 중복 방지)
       console.log('🔄 Joining chat - removing current user from local list first');
@@ -793,11 +898,360 @@ export const usePusher = () => {
     }
   };
 
+  // 알림 권한 요청
+  const requestNotificationPermission = useCallback(async () => {
+    if (!('Notification' in window)) {
+      console.log('이 브라우저는 알림을 지원하지 않습니다.');
+      return false;
+    }
+
+    console.log('📱 Current notification permission:', Notification.permission);
+
+    if (Notification.permission === 'granted') {
+      console.log('✅ 알림 권한이 이미 허용되어 있습니다.');
+      return true;
+    }
+
+    if (Notification.permission !== 'denied') {
+      try {
+        console.log('🔔 알림 권한 요청 중...');
+        const permission = await Notification.requestPermission();
+        console.log('📝 알림 권한 결과:', permission);
+        
+        if (permission === 'granted') {
+          console.log('✅ 알림 권한이 허용되었습니다!');
+          // 테스트 알림 표시
+          showDesktopNotification('🎉 알림 설정 완료!', {
+            body: '이제 새 메시지가 도착하면 알림을 받으실 수 있습니다.',
+            tag: 'permission-granted',
+          });
+        }
+        
+        return permission === 'granted';
+      } catch (error) {
+        console.error('알림 권한 요청 실패:', error);
+        return false;
+      }
+    }
+
+    console.log('❌ 알림 권한이 차단되어 있습니다.');
+    return false;
+  }, []);
+
+  // 데스크톱 알림 표시
+  const showDesktopNotification = useCallback((title: string, options?: NotificationOptions) => {
+    console.log('🔔 Attempting to show notification:', {
+      title,
+      desktopEnabled: notificationSettings.desktop,
+      permission: Notification.permission,
+      options
+    });
+
+    if (!notificationSettings.desktop) {
+      console.log('❌ 브라우저 알림이 비활성화되어 있습니다.');
+      return;
+    }
+
+    if (Notification.permission !== 'granted') {
+      console.log('❌ 알림 권한이 없습니다. 현재 상태:', Notification.permission);
+      return;
+    }
+
+    try {
+      const notification = new Notification(title, {
+        icon: '/images/cat.jpg',
+        badge: '/images/cat.jpg',
+        requireInteraction: false,
+        ...options,
+      });
+
+      console.log('✅ 알림이 성공적으로 표시되었습니다.');
+
+      // 클릭 시 창으로 포커스
+      notification.onclick = () => {
+        window.focus();
+        notification.close();
+      };
+
+      // 5초 후 자동으로 닫기
+      setTimeout(() => {
+        notification.close();
+      }, 5000);
+
+      return notification;
+    } catch (error) {
+      console.error('❌ 알림 표시 실패:', error);
+      return;
+    }
+  }, [notificationSettings.desktop]);
+
+  // 사운드 알림 재생
+  const playNotificationSound = useCallback(() => {
+    console.log('🔊 Attempting to play notification sound:', {
+      soundEnabled: notificationSettings.sound
+    });
+
+    if (!notificationSettings.sound) {
+      console.log('❌ 사운드 알림이 비활성화되어 있습니다.');
+      return;
+    }
+
+    try {
+      // 간단한 알림음 생성 (Web Audio API 사용)
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      
+      const playCuteSound = (context: AudioContext) => {
+        const playNote = (frequency: number, startTime: number, duration: number, volume: number = 0.3) => {
+          const oscillator = context.createOscillator();
+          const gainNode = context.createGain();
+          
+          oscillator.connect(gainNode);
+          gainNode.connect(context.destination);
+          
+          oscillator.frequency.setValueAtTime(frequency, startTime);
+          oscillator.type = 'sine';
+          
+          gainNode.gain.setValueAtTime(0, startTime);
+          gainNode.gain.linearRampToValueAtTime(volume, startTime + 0.02);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
+          
+          oscillator.start(startTime);
+          oscillator.stop(startTime + duration);
+        };
+
+        // 랜덤하게 다양한 귀여운 멜로디 재생
+        const melodies = [
+          // 멜로디 1: 도-미-솔-도 (C-E-G-C) 상승 아르페지오
+          () => {
+            const baseTime = context.currentTime;
+            playNote(523.25, baseTime, 0.15, 0.25);        // 도 (C5)
+            playNote(659.25, baseTime + 0.1, 0.15, 0.3);   // 미 (E5)  
+            playNote(783.99, baseTime + 0.2, 0.15, 0.35);  // 솔 (G5)
+            playNote(1046.50, baseTime + 0.3, 0.25, 0.4);  // 도 (C6)
+          },
+          // 멜로디 2: 뻐꾸기 소리 (G-E-G-E)
+          () => {
+            const baseTime = context.currentTime;
+            playNote(783.99, baseTime, 0.2, 0.3);          // 솔 (G5)
+            playNote(659.25, baseTime + 0.15, 0.2, 0.3);   // 미 (E5)
+            playNote(783.99, baseTime + 0.3, 0.2, 0.3);    // 솔 (G5)
+            playNote(659.25, baseTime + 0.45, 0.2, 0.3);   // 미 (E5)
+          },
+          // 멜로디 3: 반짝반짝 작은별 시작 (C-C-G-G-A-A-G)
+          () => {
+            const baseTime = context.currentTime;
+            playNote(523.25, baseTime, 0.12, 0.25);        // 도 (C5)
+            playNote(523.25, baseTime + 0.12, 0.12, 0.25); // 도 (C5)
+            playNote(783.99, baseTime + 0.24, 0.12, 0.3);  // 솔 (G5)
+            playNote(783.99, baseTime + 0.36, 0.12, 0.3);  // 솔 (G5)
+            playNote(880, baseTime + 0.48, 0.15, 0.35);    // 라 (A5)
+          },
+          // 멜로디 4: 도레미파솔 상승
+          () => {
+            const baseTime = context.currentTime;
+            playNote(523.25, baseTime, 0.1, 0.25);         // 도 (C5)
+            playNote(587.33, baseTime + 0.1, 0.1, 0.25);   // 레 (D5)
+            playNote(659.25, baseTime + 0.2, 0.1, 0.3);    // 미 (E5)
+            playNote(698.46, baseTime + 0.3, 0.1, 0.3);    // 파 (F5)
+            playNote(783.99, baseTime + 0.4, 0.2, 0.35);   // 솔 (G5)
+          }
+        ];
+        
+        // 랜덤하게 멜로디 선택
+        const randomMelody = melodies[Math.floor(Math.random() * melodies.length)];
+        randomMelody();
+        
+        console.log('✅ 귀여운 알림음이 성공적으로 재생되었습니다. 🎵');
+      };
+
+      // 모바일에서 오디오 컨텍스트가 suspended 상태일 수 있음
+      if (audioContext.state === 'suspended') {
+        audioContext.resume().then(() => {
+          console.log('🎵 Audio context resumed');
+          playCuteSound(audioContext);
+        });
+      } else {
+        playCuteSound(audioContext);
+      }
+    } catch (error) {
+      console.warn('❌ 알림음 재생 실패:', error);
+    }
+  }, [notificationSettings.sound]);
+
+  // 타이핑 시작 - 현재 사용자를 매개변수로 받도록 수정
+  const startTyping = useCallback(async (user?: User) => {
+    const currentUser = user || currentUserRef.current;
+    
+    console.log('⌨️ startTyping called:', {
+      hasCurrentUser: !!currentUser,
+      hasCurrentUserRef: !!currentUserRef.current,
+      isConnected: isPusherConnected(),
+      isAlreadyTyping: isTypingRef.current,
+      currentUser: currentUser?.name,
+      currentUserFull: currentUser,
+      typingSettingEnabled: notificationSettings.typing,
+      userFromParam: !!user,
+      userFromRef: !!currentUserRef.current
+    });
+
+    if (!currentUser) {
+      console.log('❌ No current user (neither param nor ref), cannot start typing');
+      return;
+    }
+
+    if (!isPusherConnected()) {
+      console.log('❌ Not connected to Pusher, cannot start typing');
+      return;
+    }
+
+    if (isTypingRef.current) {
+      console.log('⚠️ Already typing, skipping');
+      return;
+    }
+
+    try {
+      isTypingRef.current = true;
+      console.log('🚀 Sending typing start event to server...');
+      
+      const response = await fetch('/api/pusher/typing', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          action: 'start', 
+          user: currentUser 
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      console.log('✅ Typing start event sent successfully:', result);
+
+      // 타이핑 타임아웃 설정 (3초 후 자동으로 중지)
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      
+      typingTimeoutRef.current = setTimeout(() => {
+        console.log('⏰ Typing timeout reached, auto-stopping');
+        stopTyping();
+      }, 3000);
+
+    } catch (error) {
+      console.error('❌ Error starting typing:', error);
+      isTypingRef.current = false;
+    }
+  }, []);
+
+  // 타이핑 중지 - 현재 사용자를 매개변수로 받도록 수정
+  const stopTyping = useCallback(async (user?: User) => {
+    const currentUser = user || currentUserRef.current;
+    
+    console.log('⌨️ stopTyping called:', {
+      hasCurrentUser: !!currentUser,
+      hasCurrentUserRef: !!currentUserRef.current,
+      isConnected: isPusherConnected(),
+      isCurrentlyTyping: isTypingRef.current,
+      currentUser: currentUser?.name,
+      userFromParam: !!user,
+      userFromRef: !!currentUserRef.current
+    });
+
+    if (!currentUser) {
+      console.log('❌ No current user (neither param nor ref), cannot stop typing');
+      return;
+    }
+
+    if (!isPusherConnected()) {
+      console.log('❌ Not connected to Pusher, cannot stop typing');
+      return;
+    }
+
+    if (!isTypingRef.current) {
+      console.log('⚠️ Not currently typing, skipping');
+      return;
+    }
+
+    try {
+      isTypingRef.current = false;
+      console.log('🛑 Sending typing stop event to server...');
+      
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = null;
+      }
+
+      const response = await fetch('/api/pusher/typing', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          action: 'stop', 
+          user: currentUser 
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      console.log('✅ Typing stop event sent successfully:', result);
+
+    } catch (error) {
+      console.error('❌ Error stopping typing:', error);
+    }
+  }, []);
+
+  // 타이핑 사용자 정리 (5초 이상 지난 사용자 제거)
+  const cleanupTypingUsers = useCallback(() => {
+    const now = new Date().getTime();
+    setTypingUsers(prev => prev.filter(user => {
+      const startTime = new Date(user.startedAt).getTime();
+      return now - startTime < 5000; // 5초 이내
+    }));
+  }, []);
+
+  // 타이핑 정리 타이머 시작
+  useEffect(() => {
+    typingCleanupIntervalRef.current = setInterval(cleanupTypingUsers, 1000);
+    
+    return () => {
+      if (typingCleanupIntervalRef.current) {
+        clearInterval(typingCleanupIntervalRef.current);
+      }
+    };
+  }, [cleanupTypingUsers]);
+
+  // 알림 설정 변경
+  const updateNotificationSettings = useCallback((settings: Partial<NotificationSettings>) => {
+    setNotificationSettings(prev => {
+      const newSettings = { ...prev, ...settings };
+      
+      // 로컬 스토리지에 저장
+      try {
+        localStorage.setItem('chatNotificationSettings', JSON.stringify(newSettings));
+        console.log('🔧 Notification settings saved:', newSettings);
+      } catch (error) {
+        console.warn('Failed to save notification settings:', error);
+      }
+      
+      return newSettings;
+    });
+  }, []);
+
   return {
     isConnected,
     connectionStatus,
     onlineUsers,
     messages,
+    typingUsers,
+    notificationSettings,
     sendMessage,
     joinChat,
     leaveChat,
@@ -807,5 +1261,11 @@ export const usePusher = () => {
     getConnectionState,
     getCurrentTransport,
     lastError,
+    startTyping,
+    stopTyping,
+    requestNotificationPermission,
+    showDesktopNotification,
+    playNotificationSound,
+    updateNotificationSettings,
   };
 };

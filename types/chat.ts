@@ -30,11 +30,27 @@ export interface ChatRoom {
   messages: Message[];
 }
 
+// 타이핑 상태 타입
+export interface TypingUser {
+  id: string;
+  name: string;
+  startedAt: string;
+}
+
+// 알림 타입
+export interface NotificationSettings {
+  sound: boolean;
+  desktop: boolean;
+  typing: boolean;
+}
+
 // Pusher 이벤트 타입
 export interface PusherEvents {
   'new-message': Message;
   'user-joined': User;
   'user-left': User;
+  'user-typing': TypingUser;
+  'user-stopped-typing': { userId: string };
 }
 
 // API 응답 타입
