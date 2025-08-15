@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { NotificationSettings as NotificationSettingsType } from '@/types/chat';
+import { getNotificationPermission, isNotificationSupported } from '@/utils/notificationSafety';
 
 interface NotificationSettingsProps {
   settings: NotificationSettingsType;
@@ -16,15 +17,12 @@ export const NotificationSettings = ({
 }: NotificationSettingsProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const [permissionStatus, setPermissionStatus] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      // 모바일 및 데스크톱 브라우저에서 Notification API 지원 확인
-      if ('Notification' in window) {
-        return Notification.permission;
-      }
-      // Service Worker와 Push API가 있다면 부분적 지원으로 간주
-      if ('serviceWorker' in navigator && 'PushManager' in window) {
-        return 'partial';
-      }
+    if (isNotificationSupported()) {
+      return getNotificationPermission();
+    }
+    // Service Worker와 Push API가 있다면 부분적 지원으로 간주
+    if (typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window) {
+      return 'partial';
     }
     return 'unsupported';
   });

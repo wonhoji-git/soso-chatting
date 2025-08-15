@@ -34,7 +34,7 @@ export const getNotificationPermission = (): string => {
 };
 
 /**
- * 안전하게 Notification 생성
+ * 안전하게 Notification 생성 (모바일 화면 잠김 시에도 표시)
  */
 export const createSafeNotification = (title: string, options?: NotificationOptions): Notification | null => {
   if (!isNotificationSupported()) {
@@ -48,21 +48,35 @@ export const createSafeNotification = (title: string, options?: NotificationOpti
   }
   
   try {
-    const notification = new Notification(title, {
+    // 모바일 환경 감지
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    
+    const notificationOptions: NotificationOptions = {
       icon: '/images/cat.jpg',
       badge: '/images/cat.jpg',
-      requireInteraction: false,
+      // 모바일에서 화면 잠김 시에도 알림이 표시되도록 설정
+      requireInteraction: isMobile, // 모바일에서는 사용자 상호작용 필요
+      silent: false, // 소리 활성화
       ...options,
-    });
+    };
     
-    // 자동 닫기
-    setTimeout(() => {
-      try {
-        notification.close();
-      } catch (closeError) {
-        console.warn('Failed to close notification:', closeError);
-      }
-    }, 5000);
+    // 모바일에서 진동 지원
+    if (isMobile && 'vibrate' in navigator) {
+      (notificationOptions as any).vibrate = [200, 100, 200];
+    }
+    
+    const notification = new Notification(title, notificationOptions);
+    
+    // 모바일이 아닌 경우만 자동 닫기 (모바일에서는 사용자가 직접 닫도록)
+    if (!isMobile) {
+      setTimeout(() => {
+        try {
+          notification.close();
+        } catch (closeError) {
+          console.warn('Failed to close notification:', closeError);
+        }
+      }, 5000);
+    }
     
     return notification;
   } catch (error) {

@@ -472,19 +472,13 @@ export const usePusher = () => {
               // 사운드 알림
               playNotificationSound();
               
-              // 데스크톱 알림 (지원되는 경우)
-              const notificationShown = showDesktopNotification(`💬 ${message.userName}`, {
+              // 브라우저 알림 (모바일 화면 잠김 시에도 표시됨)
+              showDesktopNotification(`💬 ${message.userName}`, {
                 body: message.text,
                 tag: 'chat-message',
+                requireInteraction: false,
+                silent: false
               });
-              
-              // 데스크톱 알림이 표시되지 않은 경우 fallback 사용
-              if (!notificationShown && typeof window !== 'undefined' && (window as any).showMobileFallbackNotification) {
-                (window as any).showMobileFallbackNotification(`💬 ${message.userName}`, {
-                  body: message.text,
-                  duration: 4000
-                });
-              }
             }
             
             const newMessages = [...prev, message];
@@ -1061,12 +1055,8 @@ export const usePusher = () => {
           tag: 'permission-granted',
         });
         
-        if (!notification && typeof window !== 'undefined' && (window as any).showMobileFallbackNotification) {
-          // Fallback 알림 사용
-          (window as any).showMobileFallbackNotification('🎉 알림 설정 완료!', {
-            body: '이제 새 메시지가 도착하면 알림을 받으실 수 있습니다.',
-            duration: 3000
-          });
+        if (!notification) {
+          console.log('브라우저 알림이 지원되지 않거나 권한이 없습니다.');
         }
       }, 100);
     } else {

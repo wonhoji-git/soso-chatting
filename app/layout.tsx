@@ -4,7 +4,6 @@ import { Inter } from 'next/font/google'
 import './globals.css'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import MobileDebugger from '@/components/MobileDebugger'
-import MobileFallbackNotification from '@/components/MobileFallbackNotification'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -38,7 +37,6 @@ export default function RootLayout({
         <ErrorBoundary>
           {children}
           <MobileDebugger />
-          <MobileFallbackNotification />
         </ErrorBoundary>
       </body>
     </html>
