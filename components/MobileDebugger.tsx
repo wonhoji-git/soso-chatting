@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 interface DebugLog {
   id: string;
@@ -16,7 +16,7 @@ export default function MobileDebugger() {
   const [tapCount, setTapCount] = useState(0);
 
   // 로그 추가 함수
-  const addLog = (level: 'info' | 'warn' | 'error', message: string, data?: any) => {
+  const addLog = useCallback((level: 'info' | 'warn' | 'error', message: string, data?: any) => {
     const log: DebugLog = {
       id: `${Date.now()}-${Math.random()}`,
       timestamp: new Date().toISOString(),
@@ -31,7 +31,7 @@ export default function MobileDebugger() {
     if (level === 'error') {
       sendErrorToServer(log);
     }
-  };
+  }, []);
 
   // 서버로 에러 전송
   const sendErrorToServer = async (log: DebugLog) => {
@@ -112,7 +112,7 @@ export default function MobileDebugger() {
       console.warn = originalConsole.warn;
       console.error = originalConsole.error;
     };
-  }, []);
+  }, [addLog]);
 
   // 7번 탭으로 디버거 활성화
   const handleScreenTap = () => {

@@ -3,6 +3,12 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import Pusher from 'pusher-js';
 import { Message, User, ConnectionStatus, TypingUser, NotificationSettings } from '@/types/chat';
 import { getPusherInstance, releasePusherInstance, getPusherStatus } from '@/lib/pusher-singleton';
+import { 
+  isNotificationSupported, 
+  getNotificationPermission, 
+  createSafeNotification, 
+  requestNotificationPermissionSafe 
+} from '@/utils/notificationSafety';
 
 export const usePusher = () => {
   const [isConnected, setIsConnected] = useState(false);
@@ -466,11 +472,19 @@ export const usePusher = () => {
               // 사운드 알림
               playNotificationSound();
               
-              // 데스크톱 알림
-              showDesktopNotification(`💬 ${message.userName}`, {
+              // 데스크톱 알림 (지원되는 경우)
+              const notificationShown = showDesktopNotification(`💬 ${message.userName}`, {
                 body: message.text,
                 tag: 'chat-message',
               });
+              
+              // 데스크톱 알림이 표시되지 않은 경우 fallback 사용
+              if (!notificationShown && typeof window !== 'undefined' && (window as any).showMobileFallbackNotification) {
+                (window as any).showMobileFallbackNotification(`💬 ${message.userName}`, {
+                  body: message.text,
+                  duration: 4000
+                });
+              }
             }
             
             const newMessages = [...prev, message];
@@ -1030,91 +1044,72 @@ export const usePusher = () => {
     }
   };
 
-  // 알림 권한 요청
+  // 안전한 유틸리티 함수들을 import로 사용
+
+  // 알림 권한 요청 (안전한 유틸리티 사용)
   const requestNotificationPermission = useCallback(async () => {
-    if (!('Notification' in window)) {
-      console.log('이 브라우저는 알림을 지원하지 않습니다.');
-      return false;
-    }
-
-    console.log('📱 Current notification permission:', Notification.permission);
-
-    if (Notification.permission === 'granted') {
-      console.log('✅ 알림 권한이 이미 허용되어 있습니다.');
-      return true;
-    }
-
-    if (Notification.permission !== 'denied') {
-      try {
-        console.log('🔔 알림 권한 요청 중...');
-        const permission = await Notification.requestPermission();
-        console.log('📝 알림 권한 결과:', permission);
+    console.log('📱 Requesting notification permission...');
+    
+    const result = await requestNotificationPermissionSafe();
+    
+    if (result) {
+      console.log('✅ 알림 권한이 허용되었습니다!');
+      // 테스트 알림 표시
+      setTimeout(() => {
+        const notification = createSafeNotification('🎉 알림 설정 완료!', {
+          body: '이제 새 메시지가 도착하면 알림을 받으실 수 있습니다.',
+          tag: 'permission-granted',
+        });
         
-        if (permission === 'granted') {
-          console.log('✅ 알림 권한이 허용되었습니다!');
-          // 테스트 알림 표시
-          showDesktopNotification('🎉 알림 설정 완료!', {
+        if (!notification && typeof window !== 'undefined' && (window as any).showMobileFallbackNotification) {
+          // Fallback 알림 사용
+          (window as any).showMobileFallbackNotification('🎉 알림 설정 완료!', {
             body: '이제 새 메시지가 도착하면 알림을 받으실 수 있습니다.',
-            tag: 'permission-granted',
+            duration: 3000
           });
         }
-        
-        return permission === 'granted';
-      } catch (error) {
-        console.error('알림 권한 요청 실패:', error);
-        return false;
-      }
+      }, 100);
+    } else {
+      console.log('❌ 알림 권한이 거부되었거나 지원되지 않습니다.');
     }
-
-    console.log('❌ 알림 권한이 차단되어 있습니다.');
-    return false;
+    
+    return result;
   }, []);
 
-  // 데스크톱 알림 표시
+  // 데스크톱 알림 표시 (안전한 유틸리티 사용)
   const showDesktopNotification = useCallback((title: string, options?: NotificationOptions) => {
     console.log('🔔 Attempting to show notification:', {
       title,
       desktopEnabled: notificationSettings.desktop,
-      permission: Notification.permission,
+      permission: getNotificationPermission(),
+      isSupported: isNotificationSupported(),
       options
     });
 
     if (!notificationSettings.desktop) {
       console.log('❌ 브라우저 알림이 비활성화되어 있습니다.');
-      return;
+      return null;
     }
 
-    if (Notification.permission !== 'granted') {
-      console.log('❌ 알림 권한이 없습니다. 현재 상태:', Notification.permission);
-      return;
-    }
-
-    try {
-      const notification = new Notification(title, {
-        icon: '/images/cat.jpg',
-        badge: '/images/cat.jpg',
-        requireInteraction: false,
-        ...options,
-      });
-
+    const notification = createSafeNotification(title, options);
+    
+    if (notification) {
       console.log('✅ 알림이 성공적으로 표시되었습니다.');
-
+      
       // 클릭 시 창으로 포커스
       notification.onclick = () => {
-        window.focus();
-        notification.close();
+        try {
+          window.focus();
+          notification.close();
+        } catch (error) {
+          console.warn('Failed to handle notification click:', error);
+        }
       };
-
-      // 5초 후 자동으로 닫기
-      setTimeout(() => {
-        notification.close();
-      }, 5000);
-
-      return notification;
-    } catch (error) {
-      console.error('❌ 알림 표시 실패:', error);
-      return;
+    } else {
+      console.log('❌ 알림 표시 실패 - 권한 없음 또는 지원되지 않음');
     }
+
+    return notification;
   }, [notificationSettings.desktop]);
 
   // 사운드 알림 재생

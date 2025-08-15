@@ -24,7 +24,7 @@ interface PusherContextType {
   startTyping: (user?: User) => Promise<void>;
   stopTyping: (user?: User) => Promise<void>;
   requestNotificationPermission: () => Promise<boolean>;
-  showDesktopNotification: (title: string, options?: NotificationOptions) => Notification | undefined;
+  showDesktopNotification: (title: string, options?: NotificationOptions) => Notification | null;
   playNotificationSound: () => void;
   updateNotificationSettings: (settings: Partial<NotificationSettings>) => void;
 }
