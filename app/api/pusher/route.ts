@@ -101,10 +101,22 @@ export async function POST(req: NextRequest) {
       clientInfo: clientInfo || 'unknown'
     });
 
-    // Pusher를 통해 메시지 브로드캐스트
+    // Pusher를 통해 메시지 브로드캐스트 (중복 이벤트 제거)
     try {
-      await pusher.trigger('chat', 'new-message', messageData);
-      console.log('✅ Message broadcasted successfully');
+      // 메시지 데이터에 알림 정보 포함하여 단일 이벤트로 처리
+      const enhancedMessageData = {
+        ...messageData,
+        // 알림용 추가 정보
+        notificationTitle: `💬 ${messageData.userName}`,
+        notificationBody: messageData.text.length > 50 ? 
+          messageData.text.substring(0, 50) + '...' : 
+          messageData.text,
+        notificationIcon: messageData.userAvatar || '/images/cat.jpg'
+      };
+      
+      await pusher.trigger('chat', 'new-message', enhancedMessageData);
+      
+      console.log('✅ Message broadcasted successfully (single event)');
     } catch (pusherError) {
       console.error('❌ Failed to broadcast message:', pusherError);
       return NextResponse.json({ 

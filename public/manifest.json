@@ -94,12 +94,20 @@
   "protocol_handlers": [],
   "related_applications": [],
   "permissions": [
-    "notifications"
+    "notifications",
+    "background-sync",
+    "push"
   ],
   "gcm_sender_id": "103953800507",
   "notification_permissions": {
     "sound": true,
     "vibrate": true,
-    "badge": true
-  }
+    "badge": true,
+    "persistent": true
+  },
+  "web_app_manifest_permissions": [
+    "notifications",
+    "background-sync",
+    "background-fetch"
+  ]
 }

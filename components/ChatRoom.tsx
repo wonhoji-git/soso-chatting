@@ -7,6 +7,7 @@ import { User, Message, ConnectionStatus } from '@/types/chat';
 import { usePusherContext } from '@/contexts/PusherContext';
 import { TypingIndicator } from './TypingIndicator';
 import { NotificationSettings } from './NotificationSettings';
+import { BackgroundStateDebug } from './BackgroundStateDebug';
 import { useMobileErrorTracking } from '@/hooks/useMobileErrorTracking';
 
 interface ChatRoomProps {
@@ -24,12 +25,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
   const hasJoinedRef = useRef(false);
   const isUnmountingRef = useRef(false);
   
-  // 터치 이벤트용 상태
-  const [touchStart, setTouchStart] = useState<number | null>(null);
-  const [touchEnd, setTouchEnd] = useState<number | null>(null);
   const [sidebarAnimation, setSidebarAnimation] = useState<'idle' | 'opening' | 'closing'>('idle');
-  const [showSwipeHint, setShowSwipeHint] = useState(true);
-  const [lastInteraction, setLastInteraction] = useState(Date.now());
   
   // 스크롤 상태 관리
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -547,70 +543,16 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
     return animations[Math.floor(Math.random() * animations.length)];
   };
 
-  // 향상된 터치 스와이프 처리
-  const minSwipeDistance = 50;
-  const maxSwipeTime = 300; // 최대 스와이프 시간 (ms)
-  const swipeStartTime = useRef<number>(0);
 
-  const onTouchStart = (e: React.TouchEvent) => {
-    setTouchEnd(null);
-    setTouchStart(e.targetTouches[0].clientX);
-    swipeStartTime.current = Date.now();
-    setLastInteraction(Date.now());
-  };
-
-  const onTouchMove = (e: React.TouchEvent) => {
-    setTouchEnd(e.targetTouches[0].clientX);
-  };
-
-  const onTouchEnd = () => {
-    if (!touchStart || !touchEnd) return;
-    
-    const distance = touchStart - touchEnd;
-    const swipeTime = Date.now() - swipeStartTime.current;
-    const swipeVelocity = Math.abs(distance) / swipeTime;
-    
-    // 빠른 스와이프이거나 충분한 거리를 스와이프한 경우
-    const isValidSwipe = swipeTime < maxSwipeTime && (Math.abs(distance) > minSwipeDistance || swipeVelocity > 0.3);
-    
-    if (isValidSwipe) {
-      const isLeftSwipe = distance > minSwipeDistance;
-      const isRightSwipe = distance < -minSwipeDistance;
-
-      if (isRightSwipe && !showSidebar) {
-        setSidebarAnimation('opening');
-        setShowSidebar(true);
-        setShowSwipeHint(false);
-        setTimeout(() => setSidebarAnimation('idle'), 300);
-      }
-      if (isLeftSwipe && showSidebar) {
-        setSidebarAnimation('closing');
-        setShowSidebar(false);
-        setTimeout(() => setSidebarAnimation('idle'), 300);
-      }
-    }
-  };
-
-  // 스와이프 힌트 자동 숨기기
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (Date.now() - lastInteraction > 10000) { // 10초 후
-        setShowSwipeHint(false);
-      }
-    }, 10000);
-    return () => clearTimeout(timer);
-  }, [lastInteraction]);
 
   // 사이드바 토글 함수
   const toggleSidebar = () => {
-    setLastInteraction(Date.now());
     if (showSidebar) {
       setSidebarAnimation('closing');
       setShowSidebar(false);
     } else {
       setSidebarAnimation('opening');
       setShowSidebar(true);
-      setShowSwipeHint(false);
     }
     setTimeout(() => setSidebarAnimation('idle'), 300);
   };
@@ -626,7 +568,8 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
         color: 'bg-green-500', 
         bgColor: 'bg-green-100', 
         textColor: 'text-green-800',
-        icon: '🟢'
+        icon: '🟢',
+        statusIcon: '📶'
       };
     }
     
@@ -637,7 +580,8 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
           color: 'bg-yellow-500', 
           bgColor: 'bg-yellow-100', 
           textColor: 'text-yellow-800',
-          icon: '🟡'
+          icon: '🟡',
+          statusIcon: '⏳'
         };
       case 'connected':
         // isConnected가 false인 경우 - 상태 불일치
@@ -646,7 +590,8 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
           color: 'bg-blue-500', 
           bgColor: 'bg-blue-100', 
           textColor: 'text-blue-800',
-          icon: '🔵'
+          icon: '🔵',
+          statusIcon: '🔍'
         };
       case 'disconnected':
         return { 
@@ -654,7 +599,8 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
           color: 'bg-orange-500', 
           bgColor: 'bg-orange-100', 
           textColor: 'text-orange-800',
-          icon: '🟠'
+          icon: '🟠',
+          statusIcon: '❌'
         };
       case 'failed':
         return { 
@@ -662,7 +608,8 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
           color: 'bg-red-500', 
           bgColor: 'bg-red-100', 
           textColor: 'text-red-800',
-          icon: '🔴'
+          icon: '🔴',
+          statusIcon: '💥'
         };
       default:
         return { 
@@ -670,7 +617,8 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
           color: 'bg-gray-500', 
           bgColor: 'bg-gray-100', 
           textColor: 'text-gray-800',
-          icon: '⚪'
+          icon: '⚪',
+          statusIcon: '⚙️'
         };
     }
   };
@@ -693,17 +641,21 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
   }, [isConnected, connectionStatus, connectionDisplay, getCurrentTransport, getConnectionState]);
 
   return (
-    <div 
-      className="flex mobile-chat-container lg:max-w-7xl lg:mx-auto lg:my-4 lg:rounded-3xl lg:shadow-2xl bg-gradient-to-br from-pink-200 via-purple-200 to-indigo-300 relative overflow-hidden lg:h-[calc(100vh-2rem)]"
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
-      style={{
-        // Fix for iPhone viewport issues
-        minHeight: '-webkit-fill-available',
-        height: '-webkit-fill-available'
-      }}
-    >
+    <>
+      {/* 백그라운드 상태 디버그 컴포넌트 */}
+      <BackgroundStateDebug 
+        show={process.env.NODE_ENV === 'development'} 
+        position="bottom-left" 
+      />
+      
+      <div 
+        className="flex mobile-chat-container lg:max-w-7xl lg:mx-auto lg:my-4 lg:rounded-3xl lg:shadow-2xl bg-gradient-to-br from-pink-200 via-purple-200 to-indigo-300 relative overflow-hidden lg:h-[calc(100vh-2rem)]"
+        style={{
+          // Fix for iPhone viewport issues
+          minHeight: '-webkit-fill-available',
+          height: '-webkit-fill-available'
+        }}
+      >
       {/* 떠다니는 배경 요소들 - 반응형 크기 */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-10 left-10 text-2xl md:text-4xl lg:text-5xl animate-bounce">🌟</div>
@@ -780,45 +732,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
               </div>
             </div>
 
-            {/* 하단 슬라이드 힌트 - 조건부 표시 */}
-            {showSwipeHint && (
-              <div className="fixed bottom-20 left-0 right-0 z-30 px-4 animate-in slide-in-from-bottom duration-500">
-                <div className="relative">
-                  <button
-                    onClick={toggleSidebar}
-                    className="w-full bg-gradient-to-r from-pink-300/90 to-purple-300/90 backdrop-blur-md text-purple-700 py-4 px-4 rounded-2xl shadow-lg border-2 border-white/30 transition-all duration-300 transform hover:scale-105 active:scale-95 relative overflow-hidden"
-                    aria-label="친구 목록 열기"
-                  >
-                    {/* 배경 반짝임 효과 */}
-                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full animate-[shimmer_2s_infinite]" />
-                    
-                    <div className="flex items-center justify-center space-x-2 relative z-10">
-                      <span className="text-sm animate-bounce delay-100">👈</span>
-                      <div className="text-center">
-                        <div className="text-xs font-bold mb-1">오른쪽으로 밀어서 친구 목록 보기</div>
-                        <div className="text-xs text-purple-600 flex items-center justify-center space-x-1">
-                          <span>또는 여기를 터치하세요!</span>
-                          <span className="animate-bounce">🎈</span>
-                        </div>
-                      </div>
-                      <span className="text-sm animate-bounce delay-200">🌟</span>
-                    </div>
-                  </button>
-                  
-                  {/* 닫기 버튼 - 분리됨 */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setShowSwipeHint(false);
-                    }}
-                    className="absolute top-2 right-2 w-6 h-6 bg-white/80 rounded-full flex items-center justify-center text-purple-600 hover:bg-white transition-colors text-xs z-20"
-                    aria-label="힌트 닫기"
-                  >
-                    ×
-                  </button>
-                </div>
-              </div>
-            )}
+
           </>
         )}
       </div>
@@ -858,7 +772,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
               🌟 친구들 🌟
             </h2>
             <div className="flex items-center justify-center mt-2 bg-white/50 rounded-full px-3 py-1">
-              <span className="text-sm mr-1">{connectionDisplay.icon}</span>
+              <span className="text-sm mr-1">{connectionDisplay.statusIcon}</span>
               <div className={`w-3 h-3 rounded-full ${connectionDisplay.color} animate-pulse`}></div>
               <span className={`text-xs ml-2 ${connectionDisplay.textColor} font-bold`}>
                 {connectionDisplay.text}
@@ -994,16 +908,16 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3 min-w-0 flex-1">
-              {/* 모바일 메뉴 버튼 - 향상된 UX */}
-              <button
-                onClick={toggleSidebar}
-                className="md:hidden mobile-touch-target p-3 text-pink-600 hover:text-pink-800 rounded-2xl hover:bg-pink-200 transition-all transform hover:scale-110 active:scale-95 focus:ring-4 focus:ring-pink-300 relative"
-                aria-label={showSidebar ? '친구 목록 닫기' : '친구 목록 열기'}
-              >
-                <div className="text-2xl">
-                  🎈
-                </div>
-              </button>
+                          {/* 모바일 메뉴 버튼 - 향상된 UX */}
+            <button
+              onClick={toggleSidebar}
+              className="md:hidden mobile-touch-target p-3 text-pink-600 hover:text-pink-800 rounded-2xl hover:bg-pink-200 transition-all transform hover:scale-110 active:scale-95 focus:ring-4 focus:ring-pink-300 relative"
+              aria-label={showSidebar ? '친구 목록 닫기' : '친구 목록 열기'}
+            >
+              <div className="text-2xl">
+                👥
+              </div>
+            </button>
               
               <div className="relative">
                 <Image
@@ -1272,5 +1186,6 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
         </div>
       </div>
     </div>
+    </>
   );
 }

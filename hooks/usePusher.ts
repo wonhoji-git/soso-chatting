@@ -9,6 +9,20 @@ import {
   createSafeNotification, 
   requestNotificationPermissionSafe 
 } from '@/utils/notificationSafety';
+import { 
+  messageBuffer, 
+  addMessageToBuffer, 
+  getUnreadMessageCount, 
+  markAllMessagesAsRead,
+  onPageVisibilityChange 
+} from '@/utils/messageBuffer';
+import { 
+  backgroundDetection, 
+  isAppInBackground, 
+  isAppActive,
+  onBackgroundStateChange,
+  getBackgroundDebugInfo 
+} from '@/utils/backgroundDetection';
 
 export const usePusher = () => {
   const [isConnected, setIsConnected] = useState(false);
@@ -53,11 +67,103 @@ export const usePusher = () => {
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typingCleanupIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isTypingRef = useRef<boolean>(false);
+  const serviceWorkerRef = useRef<ServiceWorker | null>(null);
+  const visibilityListenerCleanupRef = useRef<(() => void) | null>(null);
+  const backgroundStateListenerCleanupRef = useRef<(() => void) | null>(null);
+  const recentNotificationIds = useRef<Set<string>>(new Set()); // 중복 알림 방지
   const maxRetries = process.env.NODE_ENV === 'production' ? 8 : 5;
   const retryDelay = process.env.NODE_ENV === 'production' ? 3000 : 2000;
-  const heartbeatInterval = 45000; // 45초
-  const syncInterval = 90000; // 1.5분
-  const connectionCheckInterval = process.env.NODE_ENV === 'production' ? 10000 : 5000; // 프로덕션에서는 10초
+  const heartbeatInterval = 30000; // 30초로 단축 (더 자주 체크)
+  const syncInterval = 60000; // 1분으로 단축
+  const connectionCheckInterval = process.env.NODE_ENV === 'production' ? 15000 : 5000; // 프로덕션에서는 15초
+
+  // Service Worker 통신 설정
+  const setupServiceWorkerCommunication = useCallback(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.ready.then((registration) => {
+        serviceWorkerRef.current = registration.active;
+        console.log('🔧 Service Worker communication established');
+        
+        // 페이지 가시성 변경 시 Service Worker에 알림
+        const handleVisibilityChange = () => {
+          const isVisible = !document.hidden;
+          if (serviceWorkerRef.current) {
+            serviceWorkerRef.current.postMessage({
+              type: 'PAGE_VISIBILITY',
+              isVisible: isVisible
+            });
+          }
+          
+          // 페이지가 다시 보이게 되면 버퍼된 메시지 읽음 처리
+          if (isVisible) {
+            markAllMessagesAsRead();
+          }
+        };
+        
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        window.addEventListener('focus', handleVisibilityChange);
+        
+        // Service Worker로부터 메시지 수신
+        navigator.serviceWorker.addEventListener('message', (event) => {
+          const { type, data, messages, message } = event.data;
+          
+          if (type === 'BUFFERED_MESSAGES' && messages) {
+            console.log('📬 Received buffered messages from SW:', messages.length);
+            // 버퍼된 메시지들을 메인 메시지 목록에 추가
+            setMessages(prev => {
+              const newMessages = [...prev];
+              messages.forEach((msg: any) => {
+                const isDuplicate = newMessages.some(existing => existing.id === msg.id);
+                if (!isDuplicate) {
+                  newMessages.push(msg);
+                }
+              });
+              return newMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+            });
+          } else if (type === 'NEW_MESSAGE' && data) {
+            console.log('📨 Received real-time message from SW:', data);
+            // 실시간 메시지 처리 (메시지 버퍼를 통해)
+            addMessageToBuffer(data);
+          } else if (type === 'CONNECTION_UNHEALTHY') {
+            console.log('⚠️ Service Worker detected connection issues:', message);
+            // 즉시 재연결 시도
+            setTimeout(() => {
+              console.log('🔄 Attempting reconnection due to SW warning...');
+              reconnect();
+            }, 1000);
+          }
+        });
+        
+        // 초기 버퍼된 메시지 요청
+        if (serviceWorkerRef.current) {
+          serviceWorkerRef.current.postMessage({
+            type: 'GET_BUFFERED_MESSAGES'
+          });
+        }
+      });
+    }
+  }, []);
+
+  // 중복 알림 방지 함수
+  const isNotificationAlreadyShown = useCallback((messageId: string): boolean => {
+    const alreadyShown = recentNotificationIds.current.has(messageId);
+    
+    if (!alreadyShown) {
+      // 새로운 알림 ID 추가
+      recentNotificationIds.current.add(messageId);
+      
+      // 10초 후 ID 제거 (메모리 누수 방지)
+      setTimeout(() => {
+        recentNotificationIds.current.delete(messageId);
+      }, 10000);
+      
+      console.log('🔔 New notification allowed for message:', messageId);
+      return false;
+    } else {
+      console.log('⚠️ Duplicate notification blocked for message:', messageId);
+      return true;
+    }
+  }, []);
 
   // 중복 사용자 체크 함수
   const isUserAlreadyOnline = useCallback((userId: string) => {
@@ -134,15 +240,42 @@ export const usePusher = () => {
     if (!currentUserRef.current || !isConnected) return;
     
     try {
-      await fetch('/api/pusher/user', {
+      console.log('💓 Sending heartbeat...');
+      const response = await fetch('/api/pusher/user', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ userId: currentUserRef.current.id }),
+        signal: AbortSignal.timeout(10000) // 10초 타임아웃
       });
+      
+      if (!response.ok) {
+        throw new Error(`Heartbeat failed: ${response.status}`);
+      }
+      
+      console.log('✅ Heartbeat successful');
+      
+      // Service Worker에 하트비트 성공 알림
+      if (serviceWorkerRef.current) {
+        serviceWorkerRef.current.postMessage({
+          type: 'HEARTBEAT_SUCCESS'
+        });
+      }
     } catch (error) {
-      console.error('Error sending heartbeat:', error);
+      console.error('❌ Heartbeat failed:', error);
+      
+      // 하트비트 실패 시 연결 상태 재확인
+      setTimeout(() => {
+        console.log('🔍 Heartbeat failed, checking connection status...');
+        checkConnectionStatus();
+        
+        // Pusher 연결 상태가 문제있으면 재연결 시도
+        if (pusherRef.current?.connection.state !== 'connected') {
+          console.log('⚠️ Pusher not connected after heartbeat failure, reconnecting...');
+          reconnect();
+        }
+      }, 2000);
     }
   }, [isConnected]);
 
@@ -197,7 +330,14 @@ export const usePusher = () => {
     }
     heartbeatIntervalRef.current = setInterval(() => {
       if (isConnected && currentUserRef.current) {
+        console.log('💓 Heartbeat interval triggered, background state:', {
+          isBackground: isAppInBackground(),
+          isActive: isAppActive(),
+          isConnected
+        });
         sendHeartbeat();
+      } else {
+        console.log('⚠️ Skipping heartbeat - not connected or no user');
       }
     }, heartbeatInterval);
 
@@ -442,58 +582,113 @@ export const usePusher = () => {
           return;
         }
         
-        setMessages(prev => {
-          // 다중 조건으로 중복 확인
-          const isDuplicateById = prev.some(existingMsg => existingMsg.id === message.id);
-          const isDuplicateByContent = prev.some(existingMsg => 
-            existingMsg.text === message.text && 
-            existingMsg.userId === message.userId && 
-            Math.abs(new Date(existingMsg.timestamp).getTime() - new Date(message.timestamp).getTime()) < 5000 // 5초 이내
-          );
+        // 메시지 버퍼에 추가하여 백그라운드 처리
+        const wasAdded = addMessageToBuffer({
+          id: message.id,
+          text: message.text,
+          userId: message.userId,
+          userName: message.userName,
+          userAvatar: message.userAvatar,
+          timestamp: message.timestamp
+        });
+
+        if (wasAdded) {
+          console.log('✅ Message added to buffer');
           
-          const isDuplicate = isDuplicateById || isDuplicateByContent;
-          
-          console.log('🔍 Message duplicate check:', { 
-            messageId: message.id,
-            text: message.text,
-            userId: message.userId,
-            isDuplicateById,
-            isDuplicateByContent,
-            isDuplicate,
-            existingCount: prev.length,
-            existingIds: prev.map(m => m.id).slice(-3) // 최근 3개 ID만 표시
-          });
-          
-          if (!isDuplicate) {
-            console.log('✅ Adding message to state');
+          // 메인 메시지 상태 업데이트
+          setMessages(prev => {
+            // 중복 확인
+            const isDuplicate = prev.some(existingMsg => 
+              existingMsg.id === message.id || 
+              (existingMsg.text === message.text && 
+               existingMsg.userId === message.userId && 
+               Math.abs(new Date(existingMsg.timestamp).getTime() - new Date(message.timestamp).getTime()) < 5000)
+            );
             
-            // 다른 사용자의 메시지일 때만 알림 표시
-            if (message.userId !== currentUserRef.current?.id && !message.isSystemMessage) {
-              // 사운드 알림
-              playNotificationSound();
+            if (!isDuplicate) {
+              // 다른 사용자의 메시지일 때만 알림 표시 (호환성 우선 백그라운드 감지)
+              if (message.userId !== currentUserRef.current?.id && !message.isSystemMessage) {
+                // 중복 알림 체크
+                if (isNotificationAlreadyShown(message.id)) {
+                  console.log('⚠️ Skipping duplicate notification for message:', message.id);
+                  // 메시지는 추가하되 알림만 스킵
+                  const newMessages = [...prev, message];
+                  const limitedMessages = newMessages.length > 100 ? newMessages.slice(-100) : newMessages;
+                  return limitedMessages;
+                }
+                
+                // 기존 방식과 새로운 방식을 모두 체크 (호환성 보장)
+                const isPageHidden = typeof document !== 'undefined' ? document.hidden : false;
+                const backgroundState = backgroundDetection.getState();
+                const isInBackground = isAppInBackground();
+                const isActive = isAppActive();
+                
+                // 백그라운드 조건: 기존 방식 OR 새로운 방식
+                const shouldShowBackgroundNotification = isPageHidden || isInBackground || !isActive;
+                
+                console.log('🔔 Message notification check:', {
+                  messageFrom: message.userName,
+                  messageId: message.id,
+                  isPageHidden,
+                  isInBackground,
+                  isActive,
+                  shouldShowBackgroundNotification,
+                  backgroundState: {
+                    appState: backgroundState.appState,
+                    isVisible: backgroundState.isVisible,
+                    hasFocus: backgroundState.hasFocus,
+                    platform: backgroundState.platform,
+                    isPWA: backgroundState.isPWA
+                  }
+                });
+                
+                if (shouldShowBackgroundNotification) {
+                  // 백그라운드에서는 강화된 알림
+                  console.log('📢 Showing enhanced background notification');
+                  playNotificationSound();
+                  
+                  // 서버에서 제공한 알림 정보 사용 (있는 경우)
+                  const notificationTitle = (message as any).notificationTitle || `💬 ${message.userName}`;
+                  const notificationBody = (message as any).notificationBody || message.text;
+                  const notificationIcon = (message as any).notificationIcon || message.userAvatar || '/images/cat.jpg';
+                  
+                  const backgroundNotificationOptions: NotificationOptions & { vibrate?: number[] } = {
+                    body: notificationBody,
+                    tag: 'chat-message-background',
+                    requireInteraction: false, // iOS PWA 호환성을 위해 false로 설정
+                    silent: false,
+                    icon: notificationIcon
+                  };
+                  
+                  // 플랫폼별 진동 패턴
+                  if ('vibrate' in navigator) {
+                    const vibrationPattern = backgroundState.platform === 'mobile' 
+                      ? [400, 200, 400, 200, 400] // 모바일: 더 강한 진동
+                      : [200, 100, 200]; // 데스크톱: 가벼운 진동
+                    (backgroundNotificationOptions as any).vibrate = vibrationPattern;
+                  }
+                  
+                  showDesktopNotification(notificationTitle, backgroundNotificationOptions);
+                } else {
+                  // 포그라운드에서는 가벼운 알림
+                  console.log('🔊 Showing foreground sound notification');
+                  playNotificationSound();
+                }
+              }
               
-              // 브라우저 알림 (모바일 화면 잠김 시에도 표시됨)
-              showDesktopNotification(`💬 ${message.userName}`, {
-                body: message.text,
-                tag: 'chat-message',
-                requireInteraction: false,
-                silent: false
-              });
+              const newMessages = [...prev, message];
+              const limitedMessages = newMessages.length > 100 ? newMessages.slice(-100) : newMessages;
+              
+              console.log('📝 Updated messages array length:', limitedMessages.length);
+              return limitedMessages;
             }
             
-            const newMessages = [...prev, message];
-            
-            // 메시지 수 제한 (최근 100개만 유지)
-            const limitedMessages = newMessages.length > 100 ? newMessages.slice(-100) : newMessages;
-            
-            console.log('📝 Updated messages array length:', limitedMessages.length);
-            return limitedMessages;
-          } else {
-            console.log('⚠️ Skipping duplicate message:', { id: message.id, text: message.text });
             return prev;
-          }
-        });
+          });
+        }
       });
+
+      // push-notification 이벤트 제거 (중복 방지)
 
       // 사용자 입장
       channel.bind('user-joined', (user: User) => {
@@ -721,6 +916,55 @@ export const usePusher = () => {
     componentMountedRef.current = true;
     logConnectionState('component_mount', `component mounted, setting up pusher (${initId})`);
     
+    // Service Worker 통신 설정
+    setupServiceWorkerCommunication();
+    
+    // 페이지 가시성 변경 리스너 설정
+    visibilityListenerCleanupRef.current = onPageVisibilityChange(() => {
+      console.log('📺 Page visibility changed, syncing with server...');
+      if (isConnected) {
+        setTimeout(syncWithServer, 1000);
+      }
+    });
+    
+    // 강화된 백그라운드 상태 변경 리스너 설정
+    backgroundStateListenerCleanupRef.current = onBackgroundStateChange((state) => {
+      console.log('🔄 Background state changed:', {
+        appState: state.appState,
+        isBackground: state.isBackground,
+        platform: state.platform,
+        isPWA: state.isPWA,
+        isVisible: state.isVisible,
+        hasFocus: state.hasFocus
+      });
+      
+      // Service Worker에 상태 전달
+      if (serviceWorkerRef.current) {
+        serviceWorkerRef.current.postMessage({
+          type: 'BACKGROUND_STATE_CHANGE',
+          state: state
+        });
+      }
+      
+      // 앱이 다시 활성화되면 연결 상태 확인 및 서버와 동기화
+      if (state.appState === 'active') {
+        // 즉시 연결 상태 확인
+        setTimeout(() => {
+          console.log('🔄 App became active, checking connection...');
+          checkConnectionStatus();
+          
+          // 연결되어 있으면 동기화
+          if (isConnected) {
+            syncWithServer();
+            sendHeartbeat(); // 즉시 하트비트 전송
+          } else {
+            console.log('⚠️ Not connected after becoming active, attempting reconnect...');
+            reconnect();
+          }
+        }, 500);
+      }
+    });
+    
     // 기존 정리 타이머 취소
     if (cleanupTimeoutRef.current) {
       clearTimeout(cleanupTimeoutRef.current);
@@ -757,6 +1001,18 @@ export const usePusher = () => {
         initializationIdRef.current = null;
       }
       
+      // 가시성 리스너 정리
+      if (visibilityListenerCleanupRef.current) {
+        visibilityListenerCleanupRef.current();
+        visibilityListenerCleanupRef.current = null;
+      }
+      
+      // 백그라운드 상태 리스너 정리
+      if (backgroundStateListenerCleanupRef.current) {
+        backgroundStateListenerCleanupRef.current();
+        backgroundStateListenerCleanupRef.current = null;
+      }
+      
       logConnectionState('component_unmount', `cleaning up (${initId})`);
       componentMountedRef.current = false;
       clearTimeout(initTimer);
@@ -773,7 +1029,7 @@ export const usePusher = () => {
         }
       }, cleanupDelay);
     };
-  }, [initializePusher, cleanupPusher, logConnectionState]);
+  }, [initializePusher, cleanupPusher, logConnectionState, setupServiceWorkerCommunication, syncWithServer, isConnected]);
 
   // 수동 재연결 함수
   const reconnect = useCallback(() => {
@@ -1090,10 +1346,20 @@ export const usePusher = () => {
       return null;
     }
 
-    // 화면이 활성 상태일 때는 알림 표시하지 않음 (채팅창에서 이미 메시지를 볼 수 있으므로)
-    if (isPageVisible && visibilityState === 'visible') {
+    // 화면이 활성 상태일 때는 알림 표시하지 않음 (단, 명시적으로 백그라운드 알림을 요청한 경우는 예외)
+    const isBackgroundNotification = options?.tag?.includes('background');
+    if (isPageVisible && visibilityState === 'visible' && !isBackgroundNotification) {
       console.log('⚠️ 화면이 활성 상태이므로 알림을 표시하지 않습니다.');
       return null;
+    }
+    
+    // 백그라운드 알림인 경우 추가 로깅
+    if (isBackgroundNotification) {
+      console.log('🔔 백그라운드 알림 강제 표시:', {
+        isPageVisible,
+        visibilityState,
+        tag: options?.tag
+      });
     }
 
     const notification = createSafeNotification(title, options);
@@ -1399,5 +1665,12 @@ export const usePusher = () => {
     showDesktopNotification,
     playNotificationSound,
     updateNotificationSettings,
+    // 백그라운드 메시지 관리 기능
+    getUnreadMessageCount,
+    markAllMessagesAsRead,
+    // 백그라운드 상태 관리 기능
+    isAppInBackground,
+    isAppActive,
+    getBackgroundDebugInfo,
   };
 };

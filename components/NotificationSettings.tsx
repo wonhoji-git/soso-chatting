@@ -28,6 +28,42 @@ export const NotificationSettings = ({
     console.log('📝 권한 상태 업데이트:', newStatus);
   };
 
+  const handleTestNotification = () => {
+    console.log('🧪 테스트 알림 요청');
+    
+    if (getNotificationPermission() !== 'granted') {
+      alert('알림 권한이 필요합니다. 먼저 권한을 허용해주세요.');
+      return;
+    }
+
+    try {
+      // 직접 Notification API 사용 (가장 기본적인 방법)
+      const notification = new Notification('🧪 테스트 알림', {
+        body: '알림이 정상적으로 작동합니다!',
+        icon: '/images/cat.jpg',
+        tag: 'test-notification',
+        requireInteraction: false,
+        silent: false
+      });
+
+      notification.onclick = () => {
+        console.log('🔔 테스트 알림 클릭됨');
+        notification.close();
+        window.focus();
+      };
+
+      // 5초 후 자동 닫기
+      setTimeout(() => {
+        notification.close();
+      }, 5000);
+
+      console.log('✅ 테스트 알림 생성 완료');
+    } catch (error) {
+      console.error('❌ 테스트 알림 생성 실패:', error);
+      alert('알림 생성에 실패했습니다: ' + error);
+    }
+  };
+
   const getPermissionStatusText = () => {
     // 플랫폼별 환경 감지
     const isIOSPWA = typeof window !== 'undefined' && (window.navigator as any).standalone === true;
@@ -165,20 +201,36 @@ export const NotificationSettings = ({
               
               <div className="text-xs text-gray-500">
                 브라우저 권한: {getPermissionStatusText()}
-                {(permissionStatus === 'default' || permissionStatus === 'partial' || permissionStatus === 'pwa-supported') && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      console.log('🔐 권한 요청 버튼 클릭');
-                      handlePermissionRequest();
-                    }}
-                    className="ml-2 text-blue-600 hover:text-blue-800 underline cursor-pointer"
-                  >
-                    권한 요청
-                  </button>
-                )}
+                <div className="ml-2 flex space-x-2">
+                  {(permissionStatus === 'default' || permissionStatus === 'partial' || permissionStatus === 'pwa-supported') && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        console.log('🔐 권한 요청 버튼 클릭');
+                        handlePermissionRequest();
+                      }}
+                      className="text-blue-600 hover:text-blue-800 underline cursor-pointer"
+                    >
+                      권한 요청
+                    </button>
+                  )}
+                  {permissionStatus === 'granted' && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        console.log('🧪 테스트 알림 버튼 클릭');
+                        handleTestNotification();
+                      }}
+                      className="text-green-600 hover:text-green-800 underline cursor-pointer"
+                    >
+                      🧪 테스트
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 
