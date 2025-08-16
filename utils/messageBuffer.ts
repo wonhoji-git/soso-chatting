@@ -62,12 +62,9 @@ class MessageBuffer {
 
   // 새 메시지를 버퍼에 추가
   addMessage(message: Omit<BufferedMessage, 'receivedAt' | 'isRead'>): boolean {
-    // 중복 체크
+    // 중복 체크 (ID 기반으로 단순화)
     const isDuplicate = this.buffer.some(buffered => 
-      buffered.id === message.id || 
-      (buffered.text === message.text && 
-       buffered.userId === message.userId &&
-       Math.abs(new Date(buffered.timestamp).getTime() - new Date(message.timestamp).getTime()) < 5000)
+      buffered.id === message.id
     );
 
     if (isDuplicate) {
@@ -164,12 +161,12 @@ class MessageBuffer {
     });
   }
 
-  // 오래된 메시지 정리 (1시간 이상된 메시지)
+  // 오래된 메시지 정리 (30분 이상된 메시지)
   cleanupOldMessages(): number {
-    const oneHourAgo = Date.now() - (60 * 60 * 1000);
+    const thirtyMinutesAgo = Date.now() - (30 * 60 * 1000); // 30분으로 단축
     const beforeCount = this.buffer.length;
     
-    this.buffer = this.buffer.filter(msg => msg.receivedAt > oneHourAgo);
+    this.buffer = this.buffer.filter(msg => msg.receivedAt > thirtyMinutesAgo);
     
     const removedCount = beforeCount - this.buffer.length;
     if (removedCount > 0) {

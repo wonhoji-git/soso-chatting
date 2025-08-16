@@ -62,22 +62,26 @@ export async function POST(req: NextRequest) {
 
     console.log('✅ Validation passed, creating Pusher instance');
 
-    // Pusher 인스턴스를 요청마다 새로 생성 (더 안정적)
-    let pusher;
-    try {
-      pusher = new Pusher({
-        appId,
-        key,
-        secret,
-        cluster,
-        useTLS: true,
-      });
-    } catch (pusherError) {
-      console.error('❌ Failed to create Pusher instance:', pusherError);
-      return NextResponse.json({ 
-        error: 'Failed to initialize Pusher',
-        details: pusherError instanceof Error ? pusherError.message : 'Unknown error'
-      }, { status: 500 });
+    // Pusher 싱글톤 인스턴스 사용 (연결 안정성 향상)
+    let pusher = (globalThis as any).pusherInstance;
+    if (!pusher) {
+      try {
+        pusher = new Pusher({
+          appId,
+          key,
+          secret,
+          cluster,
+          useTLS: true,
+        });
+        (globalThis as any).pusherInstance = pusher;
+        console.log('✅ Created new Pusher singleton instance');
+      } catch (pusherError) {
+        console.error('❌ Failed to create Pusher instance:', pusherError);
+        return NextResponse.json({ 
+          error: 'Failed to initialize Pusher',
+          details: pusherError instanceof Error ? pusherError.message : 'Unknown error'
+        }, { status: 500 });
+      }
     }
 
     // 메시지 ID 생성 (더 안전하게)
@@ -101,28 +105,46 @@ export async function POST(req: NextRequest) {
       clientInfo: clientInfo || 'unknown'
     });
 
-    // Pusher를 통해 메시지 브로드캐스트 (중복 이벤트 제거)
-    try {
-      // 메시지 데이터에 알림 정보 포함하여 단일 이벤트로 처리
-      const enhancedMessageData = {
-        ...messageData,
-        // 알림용 추가 정보
-        notificationTitle: `💬 ${messageData.userName}`,
-        notificationBody: messageData.text.length > 50 ? 
-          messageData.text.substring(0, 50) + '...' : 
-          messageData.text,
-        notificationIcon: messageData.userAvatar || '/images/cat.jpg'
-      };
-      
-      await pusher.trigger('chat', 'new-message', enhancedMessageData);
-      
-      console.log('✅ Message broadcasted successfully (single event)');
-    } catch (pusherError) {
-      console.error('❌ Failed to broadcast message:', pusherError);
-      return NextResponse.json({ 
-        error: 'Failed to broadcast message',
-        details: pusherError instanceof Error ? pusherError.message : 'Unknown error'
-      }, { status: 500 });
+    // Pusher를 통해 메시지 브로드캐스트 (재시도 로직 추가)
+    let broadcastSuccess = false;
+    let retryCount = 0;
+    const maxRetries = 3;
+    
+    while (!broadcastSuccess && retryCount < maxRetries) {
+      try {
+        // 메시지 데이터에 알림 정보 포함하여 단일 이벤트로 처리
+        const enhancedMessageData = {
+          ...messageData,
+          // 알림용 추가 정보
+          notificationTitle: `💬 ${messageData.userName}`,
+          notificationBody: messageData.text.length > 50 ? 
+            messageData.text.substring(0, 50) + '...' : 
+            messageData.text,
+          notificationIcon: messageData.userAvatar || '/images/cat.jpg',
+          // 재시도 정보 추가
+          retryAttempt: retryCount + 1,
+          broadcastTime: Date.now()
+        };
+        
+        await pusher.trigger('chat', 'new-message', enhancedMessageData);
+        broadcastSuccess = true;
+        
+        console.log(`✅ Message broadcasted successfully (attempt ${retryCount + 1})`);
+      } catch (pusherError) {
+        retryCount++;
+        console.error(`❌ Failed to broadcast message (attempt ${retryCount}):`, pusherError);
+        
+        if (retryCount >= maxRetries) {
+          return NextResponse.json({ 
+            error: 'Failed to broadcast message after retries',
+            details: pusherError instanceof Error ? pusherError.message : 'Unknown error',
+            retryCount
+          }, { status: 500 });
+        }
+        
+        // 재시도 전 짧은 대기
+        await new Promise(resolve => setTimeout(resolve, 100 * retryCount));
+      }
     }
 
     return NextResponse.json({ 

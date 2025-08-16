@@ -23,6 +23,12 @@ import {
   onBackgroundStateChange,
   getBackgroundDebugInfo 
 } from '@/utils/backgroundDetection';
+import {
+  startMessageTracking,
+  markMessageDelivered,
+  markMessageFailed,
+  getReliabilityStats
+} from '@/utils/messageReliability';
 
 export const usePusher = () => {
   const [isConnected, setIsConnected] = useState(false);
@@ -560,25 +566,23 @@ export const usePusher = () => {
         console.log('📨 Raw message received:', message);
         logConnectionState('message_received', `new message from ${message.userName}`);
         
-        // 에러 메시지인지 확인하여 필터링
-        const isErrorMessage = message.text && (
+        // 시스템 메시지인지 확인하여 필터링 (에러 필터링 완화)
+        const isSystemMessage = message.text && (
+          message.text.includes('[SYSTEM]') ||
+          message.text.includes('[ERROR]') ||
           message.text.includes('Application error:') ||
-          message.text.includes('client-side exception') ||
-          message.text.includes('오류가 발생했습니다') ||
-          message.text.includes('에러') ||
-          message.text.includes('Error:') ||
-          message.text.includes('Failed to')
+          message.text.includes('client-side exception')
         );
         
-        if (isErrorMessage) {
-          console.warn('⚠️ Filtering out error message from display:', {
+        if (isSystemMessage) {
+          console.warn('⚠️ Filtering out system message from display:', {
             messageId: message.id,
             text: message.text.substring(0, 100),
             userId: message.userId,
             userName: message.userName
           });
           
-          // 에러 메시지는 채팅 목록에 추가하지 않음
+          // 시스템 메시지는 채팅 목록에 추가하지 않음
           return;
         }
         
@@ -597,26 +601,14 @@ export const usePusher = () => {
           
           // 메인 메시지 상태 업데이트
           setMessages(prev => {
-            // 중복 확인
+            // 중복 확인 (ID 기반으로 단순화)
             const isDuplicate = prev.some(existingMsg => 
-              existingMsg.id === message.id || 
-              (existingMsg.text === message.text && 
-               existingMsg.userId === message.userId && 
-               Math.abs(new Date(existingMsg.timestamp).getTime() - new Date(message.timestamp).getTime()) < 5000)
+              existingMsg.id === message.id
             );
             
             if (!isDuplicate) {
               // 다른 사용자의 메시지일 때만 알림 표시 (호환성 우선 백그라운드 감지)
               if (message.userId !== currentUserRef.current?.id && !message.isSystemMessage) {
-                // 중복 알림 체크
-                if (isNotificationAlreadyShown(message.id)) {
-                  console.log('⚠️ Skipping duplicate notification for message:', message.id);
-                  // 메시지는 추가하되 알림만 스킵
-                  const newMessages = [...prev, message];
-                  const limitedMessages = newMessages.length > 100 ? newMessages.slice(-100) : newMessages;
-                  return limitedMessages;
-                }
-                
                 // 기존 방식과 새로운 방식을 모두 체크 (호환성 보장)
                 const isPageHidden = typeof document !== 'undefined' ? document.hidden : false;
                 const backgroundState = backgroundDetection.getState();
@@ -625,6 +617,15 @@ export const usePusher = () => {
                 
                 // 백그라운드 조건: 기존 방식 OR 새로운 방식
                 const shouldShowBackgroundNotification = isPageHidden || isInBackground || !isActive;
+                
+                // 중복 알림 체크 (백그라운드에서만)
+                if (shouldShowBackgroundNotification && isNotificationAlreadyShown(message.id)) {
+                  console.log('⚠️ Skipping duplicate notification for message:', message.id);
+                  // 메시지는 추가하되 알림만 스킵
+                  const newMessages = [...prev, message];
+                  const limitedMessages = newMessages.length > 100 ? newMessages.slice(-100) : newMessages;
+                  return limitedMessages;
+                }
                 
                 console.log('🔔 Message notification check:', {
                   messageFrom: message.userName,
@@ -1047,6 +1048,23 @@ export const usePusher = () => {
   }, [initializePusher, logConnectionState]);
 
   const sendMessage = async (message: string, user: User) => {
+    // 안전한 메시지 ID 생성 (모바일 환경 고려)
+    let messageId: string;
+    try {
+      if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        messageId = `${Date.now()}-${crypto.randomUUID()}`;
+      } else if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+        const array = new Uint32Array(2);
+        crypto.getRandomValues(array);
+        messageId = `${Date.now()}-${array[0]}-${array[1]}`;
+      } else {
+        messageId = `${Date.now()}-${Math.random().toString(36).substr(2, 12)}-${Math.random().toString(36).substr(2, 12)}`;
+      }
+    } catch (cryptoError) {
+      console.warn('⚠️ Crypto API failed, using fallback:', cryptoError);
+      messageId = `${Date.now()}-${Math.random().toString(36).substr(2, 12)}-${Math.random().toString(36).substr(2, 12)}`;
+    }
+    
     try {
       console.log('🚀 sendMessage called with:', { message, user });
       
@@ -1083,24 +1101,10 @@ export const usePusher = () => {
 
       console.log('✅ Pusher is connected, sending message to server');
       
-      // 안전한 메시지 ID 생성 (모바일 환경 고려)
-      let messageId;
-      try {
-        if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-          messageId = `${Date.now()}-${crypto.randomUUID()}`;
-        } else if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-          const array = new Uint32Array(2);
-          crypto.getRandomValues(array);
-          messageId = `${Date.now()}-${array[0]}-${array[1]}`;
-        } else {
-          messageId = `${Date.now()}-${Math.random().toString(36).substr(2, 12)}-${Math.random().toString(36).substr(2, 12)}`;
-        }
-      } catch (cryptoError) {
-        console.warn('⚠️ Crypto API failed, using fallback:', cryptoError);
-        messageId = `${Date.now()}-${Math.random().toString(36).substr(2, 12)}-${Math.random().toString(36).substr(2, 12)}`;
-      }
-      
       console.log('🆔 Generated message ID:', messageId);
+      
+      // 메시지 전송 추적 시작
+      startMessageTracking(messageId);
       
       // 안전한 페이로드 생성
       const payload = {
@@ -1161,6 +1165,9 @@ export const usePusher = () => {
         console.log('✅ API response success:', responseData);
         logConnectionState('send_message', 'success');
         
+        // 메시지 전송 성공 처리
+        markMessageDelivered(messageId);
+        
       } catch (fetchError) {
         clearTimeout(timeoutId);
         
@@ -1181,6 +1188,9 @@ export const usePusher = () => {
       });
       
       logConnectionState('send_message', `failed - ${errorMessage}`);
+      
+      // 메시지 전송 실패 처리
+      markMessageFailed(messageId, errorMessage, true);
       
       // 모바일 특화 에러 메시지로 변환
       if (errorMessage.includes('timeout') || errorMessage.includes('네트워크')) {
@@ -1615,16 +1625,33 @@ export const usePusher = () => {
     }));
   }, []);
 
-  // 타이핑 정리 타이머 시작
+  // 메시지 재시도 핸들러
+  const handleMessageRetry = useCallback(async (event: CustomEvent) => {
+    const { messageId } = event.detail;
+    console.log('🔄 Handling message retry for:', messageId);
+    
+    // 재시도 로직은 원래 sendMessage를 다시 호출하는 것이 아니라
+    // API 레벨에서 처리되므로 여기서는 로깅만 수행
+    console.log('📡 Message retry triggered, will be handled by API retry logic');
+  }, []);
+
+  // 타이핑 정리 타이머 및 메시지 재시도 리스너 시작
   useEffect(() => {
     typingCleanupIntervalRef.current = setInterval(cleanupTypingUsers, 1000);
+    
+    // 메시지 재시도 이벤트 리스너 등록
+    const handleRetry = (event: Event) => {
+      handleMessageRetry(event as CustomEvent);
+    };
+    window.addEventListener('messageRetry', handleRetry);
     
     return () => {
       if (typingCleanupIntervalRef.current) {
         clearInterval(typingCleanupIntervalRef.current);
       }
+      window.removeEventListener('messageRetry', handleRetry);
     };
-  }, [cleanupTypingUsers]);
+  }, [cleanupTypingUsers, handleMessageRetry]);
 
   // 알림 설정 변경
   const updateNotificationSettings = useCallback((settings: Partial<NotificationSettings>) => {
@@ -1672,5 +1699,7 @@ export const usePusher = () => {
     isAppInBackground,
     isAppActive,
     getBackgroundDebugInfo,
+    // 메시지 신뢰성 통계
+    getReliabilityStats,
   };
 };
