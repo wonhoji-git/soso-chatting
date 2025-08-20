@@ -186,8 +186,14 @@ class BackgroundDetection {
   }
 
   private startPeriodicCheck() {
-    // 주기적으로 상태 확인 (모바일에서는 더 자주)
-    const interval = this.state.platform === 'mobile' ? 5000 : 10000;
+    // 주기적으로 상태 확인 (모바일에서는 더 자주, PWA에서는 더욱 자주)
+    let interval = 10000; // 기본 10초
+    
+    if (this.state.platform === 'mobile') {
+      interval = this.state.isPWA ? 3000 : 5000; // PWA: 3초, 모바일 브라우저: 5초
+    }
+    
+    console.log(`⏰ Starting periodic background check every ${interval/1000}s for ${this.state.platform}${this.state.isPWA ? ' PWA' : ''}`);
     
     this.checkInterval = setInterval(() => {
       this.performHealthCheck();
@@ -211,23 +217,84 @@ class BackgroundDetection {
         platform: this.state.platform
       });
 
+      const wasBackground = this.state.isBackground;
+      const isNowBackground = !actualVisibility || !actualFocus;
+      
       this.setState({
         isVisible: actualVisibility,
         hasFocus: actualFocus,
-        isBackground: !actualVisibility || !actualFocus,
+        isBackground: isNowBackground,
         visibilityState: document.visibilityState,
-        appState: (!actualVisibility || !actualFocus) ? 'background' : 'active'
+        appState: isNowBackground ? 'background' : 'active'
+      });
+
+      // Service Worker에 상태 변경 알림
+      this.notifyServiceWorker({
+        isBackground: isNowBackground,
+        platform: this.state.platform,
+        isPWA: this.state.isPWA,
+        appState: isNowBackground ? 'background' : 'active'
+      });
+    }
+
+    // 모바일에서 더 엄격한 백그라운드 감지
+    const isMobileBackground = this.detectMobileBackgroundState();
+    if (isMobileBackground && this.state.appState !== 'background') {
+      console.log('📱 Mobile background state detected');
+      this.setState({
+        appState: 'background',
+        isBackground: true
+      });
+      
+      this.notifyServiceWorker({
+        isBackground: true,
+        platform: this.state.platform,
+        isPWA: this.state.isPWA,
+        appState: 'background'
       });
     }
 
     // 장시간 비활성 감지 (모바일에서는 더 짧게)
-    const inactiveThreshold = this.state.platform === 'mobile' ? 30000 : 60000; // 30초/60초
+    const inactiveThreshold = this.state.platform === 'mobile' ? 20000 : 40000; // 20초/40초로 단축
     if (timeSinceActivity > inactiveThreshold && this.state.appState === 'active') {
       console.log('😴 Long inactivity detected, marking as background');
       this.setState({
         appState: 'background',
         isBackground: true
       });
+    }
+  }
+
+  // 모바일 백그라운드 상태 감지 (추가적인 체크)
+  private detectMobileBackgroundState(): boolean {
+    if (this.state.platform !== 'mobile') return false;
+    
+    // 여러 조건을 종합적으로 판단
+    const isDocumentHidden = document.hidden;
+    const hasNoFocus = !document.hasFocus();
+    const lowActivity = Date.now() - this.lastUserActivity > 10000; // 10초
+    
+    // PWA 환경에서는 더 엄격하게 판단
+    if (this.state.isPWA) {
+      return isDocumentHidden || (hasNoFocus && lowActivity);
+    }
+    
+    // 일반 모바일 브라우저에서는 document.hidden을 주로 참고
+    return isDocumentHidden;
+  }
+
+  // Service Worker에 상태 변경 알림
+  private notifyServiceWorker(state: any) {
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      try {
+        navigator.serviceWorker.controller.postMessage({
+          type: 'BACKGROUND_STATE_CHANGE',
+          state
+        });
+        console.log('📤 Notified Service Worker of state change:', state);
+      } catch (error) {
+        console.warn('Failed to notify Service Worker:', error);
+      }
     }
   }
 

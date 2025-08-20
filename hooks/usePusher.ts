@@ -109,34 +109,93 @@ export const usePusher = () => {
         document.addEventListener('visibilitychange', handleVisibilityChange);
         window.addEventListener('focus', handleVisibilityChange);
         
-        // Service Worker로부터 메시지 수신
+        // Service Worker로부터 메시지 수신 (개선된 처리)
         navigator.serviceWorker.addEventListener('message', (event) => {
-          const { type, data, messages, message } = event.data;
+          const { type, data, messages, message, bufferInfo, timestamp } = event.data;
+          
+          console.log('📨 Service Worker message received:', { type, timestamp });
           
           if (type === 'BUFFERED_MESSAGES' && messages) {
-            console.log('📬 Received buffered messages from SW:', messages.length);
-            // 버퍼된 메시지들을 메인 메시지 목록에 추가
-            setMessages(prev => {
-              const newMessages = [...prev];
-              messages.forEach((msg: any) => {
-                const isDuplicate = newMessages.some(existing => existing.id === msg.id);
-                if (!isDuplicate) {
-                  newMessages.push(msg);
-                }
-              });
-              return newMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+            console.log('📬 Received buffered messages from SW:', {
+              messageCount: messages.length,
+              bufferInfo,
+              timestamp: new Date(timestamp).toLocaleTimeString()
             });
+            
+            // 버퍼된 메시지들을 메인 메시지 목록에 안전하게 추가
+            setMessages(prev => {
+              const existingIds = new Set(prev.map(msg => msg.id));
+              const newMessages = messages.filter((msg: any) => !existingIds.has(msg.id));
+              
+              if (newMessages.length > 0) {
+                console.log(`📬 Adding ${newMessages.length} new buffered messages`);
+                const combined = [...prev, ...newMessages];
+                return combined.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+              }
+              
+              return prev;
+            });
+            
+            // 버퍼된 메시지가 있다면 사용자에게 알림
+            if (messages.length > 0) {
+              console.log('📱 Showing missed messages notification');
+              if (notificationSettings.desktop) {
+                showDesktopNotification(
+                  `📬 ${messages.length}개의 메시지를 놓쳤습니다`,
+                  {
+                    body: `백그라운드에 있는 동안 받은 메시지들을 확인해보세요.`,
+                    icon: '/images/cat.jpg',
+                    tag: 'missed-messages'
+                  }
+                );
+              }
+            }
+            
           } else if (type === 'NEW_MESSAGE' && data) {
-            console.log('📨 Received real-time message from SW:', data);
-            // 실시간 메시지 처리 (메시지 버퍼를 통해)
-            addMessageToBuffer(data);
+            console.log('🔄 Received real-time message from SW:', {
+              messageId: data.id,
+              userName: data.userName,
+              timestamp: new Date(data.timestamp).toLocaleTimeString()
+            });
+            
+            // 중복 방지 후 실시간 메시지 추가
+            setMessages(prev => {
+              const isDuplicate = prev.some(msg => msg.id === data.id);
+              if (!isDuplicate) {
+                const newMessages = [...prev, data];
+                return newMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+              }
+              return prev;
+            });
+            
+            // 백그라운드에 있을 때만 데스크톱 알림 표시
+            if (isAppInBackground() && notificationSettings.desktop) {
+              if (!isNotificationAlreadyShown(data.id)) {
+                showDesktopNotification(
+                  `💬 ${data.userName}`,
+                  {
+                    body: data.text.length > 50 ? data.text.substring(0, 50) + '...' : data.text,
+                    icon: data.userAvatar || '/images/cat.jpg',
+                    tag: `message-${data.userId}`
+                  }
+                );
+              }
+            }
+            
           } else if (type === 'CONNECTION_UNHEALTHY') {
             console.log('⚠️ Service Worker detected connection issues:', message);
-            // 즉시 재연결 시도
+            
+            // 연결 문제 UI 표시
+            setConnectionStatus('reconnecting');
+            
+            // 2초 후 재연결 시도
             setTimeout(() => {
               console.log('🔄 Attempting reconnection due to SW warning...');
               reconnect();
-            }, 1000);
+            }, 2000);
+            
+          } else {
+            console.log('📨 Unknown Service Worker message type:', type);
           }
         });
         
@@ -601,12 +660,34 @@ export const usePusher = () => {
           
           // 메인 메시지 상태 업데이트
           setMessages(prev => {
-            // 중복 확인 (ID 기반으로 단순화)
-            const isDuplicate = prev.some(existingMsg => 
-              existingMsg.id === message.id
-            );
+            // 강화된 중복 확인 (ID와 시퀀스 번호 기반)
+            const isDuplicate = prev.some(existingMsg => {
+              // 기본 ID 중복 체크
+              if (existingMsg.id === message.id) {
+                return true;
+              }
+              
+              // 시퀀스 번호가 있는 경우 추가 체크 (재시도 메시지 구분)
+              const existingSequence = (existingMsg as any).messageSequence;
+              const newSequence = (message as any).messageSequence;
+              if (existingSequence && newSequence) {
+                const existingBase = existingSequence.split('-')[0];
+                const newBase = newSequence.split('-')[0];
+                return existingBase === newBase;
+              }
+              
+              return false;
+            });
             
             if (!isDuplicate) {
+              console.log('📝 Adding new message to chat:', {
+                messageId: message.id,
+                sequence: (message as any).messageSequence,
+                userName: message.userName,
+                textPreview: message.text.substring(0, 30),
+                serverTimestamp: (message as any).serverTimestamp,
+                retryAttempt: (message as any).retryAttempt
+              });
               // 다른 사용자의 메시지일 때만 알림 표시 (호환성 우선 백그라운드 감지)
               if (message.userId !== currentUserRef.current?.id && !message.isSystemMessage) {
                 // 기존 방식과 새로운 방식을 모두 체크 (호환성 보장)
@@ -678,9 +759,34 @@ export const usePusher = () => {
               }
               
               const newMessages = [...prev, message];
-              const limitedMessages = newMessages.length > 100 ? newMessages.slice(-100) : newMessages;
               
-              console.log('📝 Updated messages array length:', limitedMessages.length);
+              // 메시지 정렬 (타임스탬프 기준, 동일한 시간대에는 서버 시간 우선)
+              const sortedMessages = newMessages.sort((a, b) => {
+                const aTime = new Date((a as any).serverTimestamp || a.timestamp).getTime();
+                const bTime = new Date((b as any).serverTimestamp || b.timestamp).getTime();
+                
+                // 시간이 같으면 messageSequence로 정렬 (재시도 순서 보장)
+                if (Math.abs(aTime - bTime) < 1000) { // 1초 이내는 동일 시간으로 간주
+                  const aSequence = (a as any).messageSequence;
+                  const bSequence = (b as any).messageSequence;
+                  if (aSequence && bSequence) {
+                    return aSequence.localeCompare(bSequence);
+                  }
+                }
+                
+                return aTime - bTime;
+              });
+              
+              // 최근 100개 메시지만 유지
+              const limitedMessages = sortedMessages.length > 100 ? sortedMessages.slice(-100) : sortedMessages;
+              
+              console.log('📝 Updated messages array:', {
+                totalLength: limitedMessages.length,
+                newMessageId: message.id,
+                newMessageTime: (message as any).serverTimestamp || message.timestamp,
+                isFirstMessage: prev.length === 0
+              });
+              
               return limitedMessages;
             }
             
@@ -1092,6 +1198,7 @@ export const usePusher = () => {
         throw new Error('Message too long: maximum 1000 characters');
       }
       
+      // 연결 상태 및 채널 구독 상태 확인 강화
       if (!isPusherConnected()) {
         const currentState = getConnectionState();
         console.log('❌ Not connected to Pusher:', currentState);
@@ -1099,7 +1206,29 @@ export const usePusher = () => {
         throw new Error('Not connected to Pusher');
       }
 
-      console.log('✅ Pusher is connected, sending message to server');
+      // 채널 구독 상태 확인
+      if (!channelRef.current) {
+        console.log('❌ Channel not subscribed');
+        logConnectionState('send_message', 'failed - channel not subscribed');
+        throw new Error('Channel not subscribed');
+      }
+
+      // 연결 준비성 추가 확인 (첫 번째 메시지 문제 해결)
+      const connectionState = pusherRef.current?.connection.state;
+      if (connectionState !== 'connected') {
+        console.log('❌ Pusher connection not in connected state:', connectionState);
+        logConnectionState('send_message', `failed - connection state: ${connectionState}`);
+        throw new Error(`Pusher connection not ready: ${connectionState}`);
+      }
+
+      // 최근 연결된 경우 추가 대기 (첫 번째 메시지 안정성 향상)
+      const timeSinceConnection = Date.now() - (connectionAttemptsRef.current === 0 ? 0 : 1000);
+      if (timeSinceConnection < 500) {
+        console.log('⏰ Recently connected, waiting for stability...');
+        await new Promise(resolve => setTimeout(resolve, 500 - timeSinceConnection));
+      }
+
+      console.log('✅ Pusher is connected and channel is ready, sending message to server');
       
       console.log('🆔 Generated message ID:', messageId);
       
@@ -1220,6 +1349,17 @@ export const usePusher = () => {
         logConnectionState('join_chat', 'failed - channel not subscribed');
         throw new Error('Channel not subscribed');
       }
+
+      // 연결 준비성 추가 확인
+      const connectionState = pusherRef.current?.connection.state;
+      if (connectionState !== 'connected') {
+        logConnectionState('join_chat', `failed - connection state: ${connectionState}`);
+        throw new Error(`Pusher connection not ready: ${connectionState}`);
+      }
+
+      // 연결 안정화 대기 (첫 번째 사용자 입장 시 문제 방지)
+      console.log('⏰ Waiting for connection stability before joining...');
+      await new Promise(resolve => setTimeout(resolve, 300));
 
       // 현재 사용자 설정
       currentUserRef.current = user;

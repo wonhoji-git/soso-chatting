@@ -60,15 +60,25 @@ class MessageBuffer {
     });
   }
 
-  // 새 메시지를 버퍼에 추가
+  // 새 메시지를 버퍼에 추가 (개선된 버전)
   addMessage(message: Omit<BufferedMessage, 'receivedAt' | 'isRead'>): boolean {
-    // 중복 체크 (ID 기반으로 단순화)
-    const isDuplicate = this.buffer.some(buffered => 
-      buffered.id === message.id
-    );
+    // 더 정교한 중복 체크 (ID와 타임스탬프 기반)
+    const isDuplicate = this.buffer.some(buffered => {
+      const isSameId = buffered.id === message.id;
+      const isSameUser = buffered.userId === message.userId;
+      const isSameText = buffered.text === message.text;
+      const timeDiff = Math.abs(new Date(buffered.timestamp).getTime() - new Date(message.timestamp).getTime());
+      
+      // ID가 같거나, 같은 사용자가 같은 텍스트를 3초 내에 보낸 경우 중복으로 판단
+      return isSameId || (isSameUser && isSameText && timeDiff < 3000);
+    });
 
     if (isDuplicate) {
-      console.log('⚠️ 중복 메시지 버퍼링 스킵:', message.id);
+      console.log('⚠️ 중복 메시지 버퍼링 스킵:', {
+        messageId: message.id,
+        userName: message.userName,
+        text: message.text.substring(0, 30) + '...'
+      });
       return false;
     }
 
@@ -82,7 +92,9 @@ class MessageBuffer {
     
     // 버퍼 크기 제한
     if (this.buffer.length > this.maxBufferSize) {
+      const removedCount = this.buffer.length - this.maxBufferSize;
       this.buffer = this.buffer.slice(-this.maxBufferSize);
+      console.log(`🗑️ 버퍼 크기 제한으로 ${removedCount}개 메시지 제거`);
     }
 
     console.log('📬 메시지 버퍼에 추가:', {
@@ -90,10 +102,30 @@ class MessageBuffer {
       userName: message.userName,
       isPageVisible: this.isPageVisible,
       bufferSize: this.buffer.length,
-      isRead: bufferedMessage.isRead
+      isRead: bufferedMessage.isRead,
+      timestamp: new Date(message.timestamp).toLocaleTimeString()
     });
 
+    // Service Worker에 버퍼 상태 업데이트 알림
+    this.notifyServiceWorker();
+
     return true;
+  }
+
+  // Service Worker에 버퍼 상태 알림
+  private notifyServiceWorker() {
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      try {
+        navigator.serviceWorker.controller.postMessage({
+          type: 'BUFFER_UPDATE',
+          bufferSize: this.buffer.length,
+          unreadCount: this.getUnreadCount(),
+          isPageVisible: this.isPageVisible
+        });
+      } catch (error) {
+        console.warn('Failed to notify Service Worker of buffer update:', error);
+      }
+    }
   }
 
   // 읽지 않은 메시지 수 반환

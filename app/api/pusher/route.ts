@@ -105,10 +105,11 @@ export async function POST(req: NextRequest) {
       clientInfo: clientInfo || 'unknown'
     });
 
-    // Pusher를 통해 메시지 브로드캐스트 (재시도 로직 추가)
+    // Pusher를 통해 메시지 브로드캐스트 (재시도 로직 강화)
     let broadcastSuccess = false;
     let retryCount = 0;
-    const maxRetries = 3;
+    const maxRetries = 5;
+    let lastError: any = null;
     
     while (!broadcastSuccess && retryCount < maxRetries) {
       try {
@@ -123,27 +124,72 @@ export async function POST(req: NextRequest) {
           notificationIcon: messageData.userAvatar || '/images/cat.jpg',
           // 재시도 정보 추가
           retryAttempt: retryCount + 1,
-          broadcastTime: Date.now()
+          broadcastTime: Date.now(),
+          // 디버깅 정보
+          serverTimestamp: new Date().toISOString(),
+          messageSequence: `${finalMessageId}-${retryCount + 1}`
         };
         
+        // Pusher 연결 상태 확인
+        if (pusher.connection && pusher.connection.state !== 'connected') {
+          console.log(`⚠️ Pusher connection not ready, state: ${pusher.connection.state}`);
+          throw new Error(`Pusher connection state: ${pusher.connection.state}`);
+        }
+        
+        const triggerStart = Date.now();
         await pusher.trigger('chat', 'new-message', enhancedMessageData);
+        const triggerDuration = Date.now() - triggerStart;
+        
         broadcastSuccess = true;
         
-        console.log(`✅ Message broadcasted successfully (attempt ${retryCount + 1})`);
+        console.log(`✅ Message broadcasted successfully (attempt ${retryCount + 1}, duration: ${triggerDuration}ms)`, {
+          messageId: finalMessageId,
+          userName: messageData.userName,
+          textPreview: messageData.text.substring(0, 30),
+          triggerDuration,
+          totalRetries: retryCount
+        });
+        
+        // 성공 시 통계 업데이트
+        if (retryCount > 0) {
+          console.log(`🔄 Message delivery required ${retryCount} retries - investigating network stability`);
+        }
+        
       } catch (pusherError) {
+        lastError = pusherError;
         retryCount++;
-        console.error(`❌ Failed to broadcast message (attempt ${retryCount}):`, pusherError);
+        
+        const errorMessage = pusherError instanceof Error ? pusherError.message : 'Unknown error';
+        console.error(`❌ Failed to broadcast message (attempt ${retryCount}/${maxRetries}):`, {
+          error: errorMessage,
+          messageId: finalMessageId,
+          userName: messageData.userName,
+          pusherState: pusher.connection?.state || 'unknown',
+          retryCount,
+          maxRetries
+        });
         
         if (retryCount >= maxRetries) {
+          console.error('🚨 Maximum retries reached, message broadcast failed completely', {
+            finalError: errorMessage,
+            messageId: finalMessageId,
+            totalAttempts: retryCount,
+            userName: messageData.userName
+          });
+          
           return NextResponse.json({ 
-            error: 'Failed to broadcast message after retries',
-            details: pusherError instanceof Error ? pusherError.message : 'Unknown error',
-            retryCount
+            error: 'Failed to broadcast message after maximum retries',
+            details: errorMessage,
+            retryCount,
+            messageId: finalMessageId,
+            timestamp: new Date().toISOString()
           }, { status: 500 });
         }
         
-        // 재시도 전 짧은 대기
-        await new Promise(resolve => setTimeout(resolve, 100 * retryCount));
+        // 지수 백오프로 재시도 대기 시간 계산
+        const backoffDelay = Math.min(200 * Math.pow(1.5, retryCount - 1), 2000);
+        console.log(`⏰ Waiting ${backoffDelay}ms before retry ${retryCount + 1}/${maxRetries}`);
+        await new Promise(resolve => setTimeout(resolve, backoffDelay));
       }
     }
 

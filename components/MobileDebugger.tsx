@@ -64,18 +64,18 @@ export default function MobileDebugger() {
   // 전역 에러 핸들러 설정
   useEffect(() => {
     const handleError = (event: ErrorEvent) => {
-      addLog('error', `JS Error: ${event.message}`, {
+      setTimeout(() => addLog('error', `JS Error: ${event.message}`, {
         filename: event.filename,
         lineno: event.lineno,
         colno: event.colno,
         error: event.error?.stack
-      });
+      }), 0);
     };
 
     const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
-      addLog('error', `Unhandled Promise Rejection: ${event.reason}`, {
+      setTimeout(() => addLog('error', `Unhandled Promise Rejection: ${event.reason}`, {
         reason: event.reason
-      });
+      }), 0);
     };
 
     window.addEventListener('error', handleError);
@@ -90,17 +90,17 @@ export default function MobileDebugger() {
 
     console.log = (...args) => {
       originalConsole.log(...args);
-      addLog('info', args.join(' '), args);
+      setTimeout(() => addLog('info', args.join(' '), args), 0);
     };
 
     console.warn = (...args) => {
       originalConsole.warn(...args);
-      addLog('warn', args.join(' '), args);
+      setTimeout(() => addLog('warn', args.join(' '), args), 0);
     };
 
     console.error = (...args) => {
       originalConsole.error(...args);
-      addLog('error', args.join(' '), args);
+      setTimeout(() => addLog('error', args.join(' '), args), 0);
     };
 
     return () => {

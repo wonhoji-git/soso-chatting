@@ -1,5 +1,5 @@
 // Service Worker for PWA Push Notifications with Enhanced Background Message Handling
-const CACHE_NAME = 'soso-chat-v2';
+const CACHE_NAME = 'soso-chat-v3';
 const urlsToCache = [
   '/',
   '/images/cat.jpg',
@@ -105,7 +105,7 @@ self.addEventListener('message', (event) => {
   }
 });
 
-// 버퍼된 메시지를 클라이언트에 전송
+// 버퍼된 메시지를 클라이언트에 전송 (개선된 버전)
 async function sendBufferedMessagesToClient() {
   if (backgroundMessageBuffer.length === 0) return;
   
@@ -115,15 +115,67 @@ async function sendBufferedMessagesToClient() {
       includeUncontrolled: true
     });
     
-    for (const client of clients) {
-      client.postMessage({
-        type: 'BUFFERED_MESSAGES',
-        messages: backgroundMessageBuffer
-      });
+    if (clients.length === 0) {
+      console.log('[SW] No active clients found, keeping messages in buffer');
+      return;
     }
     
-    console.log('[SW] Sent buffered messages to clients:', backgroundMessageBuffer.length);
-    backgroundMessageBuffer = []; // 버퍼 클리어
+    // 처리되지 않은 메시지만 전송
+    const unprocessedMessages = backgroundMessageBuffer.filter(msg => !msg.processed);
+    
+    if (unprocessedMessages.length === 0) {
+      console.log('[SW] No unprocessed messages to send');
+      return;
+    }
+    
+    console.log('[SW] Sending buffered messages to clients:', {
+      totalMessages: backgroundMessageBuffer.length,
+      unprocessedMessages: unprocessedMessages.length,
+      clientCount: clients.length
+    });
+    
+    let successCount = 0;
+    
+    for (const client of clients) {
+      try {
+        client.postMessage({
+          type: 'BUFFERED_MESSAGES',
+          messages: unprocessedMessages,
+          timestamp: Date.now(),
+          bufferInfo: {
+            total: backgroundMessageBuffer.length,
+            sent: unprocessedMessages.length
+          }
+        });
+        successCount++;
+      } catch (clientError) {
+        console.warn('[SW] Failed to send message to client:', clientError);
+      }
+    }
+    
+    if (successCount > 0) {
+      // 전송 성공한 메시지들을 처리됨으로 표시
+      unprocessedMessages.forEach(msg => {
+        const bufferMsg = backgroundMessageBuffer.find(bMsg => bMsg.id === msg.id);
+        if (bufferMsg) {
+          bufferMsg.processed = true;
+        }
+      });
+      
+      console.log(`[SW] Successfully sent messages to ${successCount} clients`);
+      
+      // 3초 후 처리된 메시지들 정리
+      setTimeout(() => {
+        const beforeLength = backgroundMessageBuffer.length;
+        backgroundMessageBuffer = backgroundMessageBuffer.filter(msg => !msg.processed);
+        const afterLength = backgroundMessageBuffer.length;
+        
+        if (beforeLength !== afterLength) {
+          console.log(`[SW] Cleaned up ${beforeLength - afterLength} processed messages`);
+        }
+      }, 3000);
+    }
+    
   } catch (error) {
     console.error('[SW] Error sending buffered messages:', error);
   }
@@ -168,30 +220,46 @@ async function notifyClientToReconnect() {
   }
 }
 
-// 주기적 연결 상태 확인 시작
+// 주기적 연결 상태 확인 시작 (모바일 백그라운드 최적화)
 function startConnectionMonitoring() {
   if (connectionHealthCheck) {
     clearInterval(connectionHealthCheck);
   }
   
-  // 2분마다 연결 상태 확인
-  connectionHealthCheck = setInterval(checkConnectionHealth, 120000);
-  console.log('[SW] Started connection monitoring');
+  // 모바일에서는 더 자주 확인 (1분마다)
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(self.navigator.userAgent || '');
+  const checkInterval = isMobile ? 60000 : 120000; // 모바일: 1분, 데스크톱: 2분
+  
+  connectionHealthCheck = setInterval(checkConnectionHealth, checkInterval);
+  console.log(`[SW] Started connection monitoring (${isMobile ? '1min' : '2min'} interval)`);
 }
 
 // Service Worker 시작 시 모니터링 시작
 startConnectionMonitoring();
 
-// 백그라운드에서 메시지 처리
+// 백그라운드에서 메시지 처리 (개선된 버전)
 function handleBackgroundMessage(messageData) {
   // 메시지 수신 = 연결이 살아있음을 의미
   lastHeartbeatTime = Date.now();
   
+  // 중복 메시지 방지
+  const isDuplicate = backgroundMessageBuffer.some(msg => 
+    msg.id === messageData.id && Math.abs(msg.receivedAt - Date.now()) < 1000
+  );
+  
+  if (isDuplicate) {
+    console.log('[SW] Duplicate message ignored:', messageData.id);
+    return;
+  }
+  
   // 메시지를 버퍼에 추가
-  backgroundMessageBuffer.push({
+  const bufferedMessage = {
     ...messageData,
-    receivedAt: Date.now()
-  });
+    receivedAt: Date.now(),
+    processed: false
+  };
+  
+  backgroundMessageBuffer.push(bufferedMessage);
   
   // 버퍼 크기 제한
   if (backgroundMessageBuffer.length > MAX_BUFFER_SIZE) {
@@ -201,9 +269,88 @@ function handleBackgroundMessage(messageData) {
   console.log('[SW] Message added to background buffer:', {
     messageId: messageData.id,
     userName: messageData.userName,
-    bufferSize: backgroundMessageBuffer.length
+    bufferSize: backgroundMessageBuffer.length,
+    backgroundState: backgroundState.appState,
+    isBackground: backgroundState.isBackground
   });
+  
+  // 백그라운드 상태에서만 알림 표시를 위한 추가 처리
+  if (backgroundState.isBackground || !isPageVisible) {
+    console.log('[SW] Processing background message for notification');
+    scheduleBackgroundNotification(messageData);
+  }
 }
+
+// 백그라운드 알림 스케줄링 (중복 방지 포함)
+function scheduleBackgroundNotification(messageData) {
+  // 최근 알림 중복 방지 (같은 사용자의 메시지 5초 내 중복 차단)
+  const recentNotificationKey = `${messageData.userId}_${Math.floor(Date.now() / 5000)}`;
+  
+  if (recentNotifications.has(recentNotificationKey)) {
+    console.log('[SW] Recent notification exists, skipping:', recentNotificationKey);
+    return;
+  }
+  
+  recentNotifications.add(recentNotificationKey);
+  
+  // 5분 후 정리
+  setTimeout(() => {
+    recentNotifications.delete(recentNotificationKey);
+  }, 5 * 60 * 1000);
+  
+  // 알림 데이터 준비
+  const notificationData = {
+    title: `💬 ${messageData.userName}`,
+    body: messageData.text.length > 50 ? messageData.text.substring(0, 50) + '...' : messageData.text,
+    icon: messageData.userAvatar || '/images/cat.jpg',
+    badge: '/images/cat.jpg',
+    tag: `message_${messageData.userId}`,
+    data: {
+      messageId: messageData.id,
+      userId: messageData.userId,
+      userName: messageData.userName,
+      timestamp: Date.now(),
+      url: '/'
+    }
+  };
+  
+  // 플랫폼별 최적화
+  const isAndroid = /Android/i.test(self.navigator.userAgent || '');
+  const isIOS = /iPad|iPhone|iPod/.test(self.navigator.userAgent || '');
+  
+  // 모든 모바일 플랫폼에서 백그라운드 알림 안정성 향상
+  if (isAndroid) {
+    notificationData.requireInteraction = true;
+    notificationData.persistent = true;
+    notificationData.vibrate = [500, 300, 500, 300, 500];
+    notificationData.actions = [
+      { action: 'open', title: '채팅방 열기' },
+      { action: 'close', title: '닫기' }
+    ];
+    // 안드로이드에서 이미지 추가 (백그라운드에서 더 눈에 잘 띔)
+    notificationData.image = messageData.userAvatar || '/images/cat.jpg';
+  } else if (isIOS) {
+    // iOS는 백그라운드에서도 requireInteraction을 true로 설정
+    notificationData.requireInteraction = true;
+    notificationData.persistent = true;
+    notificationData.vibrate = [300, 150, 300, 150, 300];
+    // iOS는 이미지와 액션 제한
+    delete notificationData.image;
+    notificationData.actions = notificationData.actions.slice(0, 2);
+  }
+  
+  // 즉시 알림 표시 (딜레이 없음)
+  self.registration.showNotification(notificationData.title, notificationData)
+    .then(() => {
+      console.log('[SW] Background notification displayed successfully');
+    })
+    .catch(error => {
+      console.error('[SW] Failed to display background notification:', error);
+    });
+}
+
+// 최근 알림 추적 (중복 방지용)
+const recentNotifications = new Set();
 
 // 푸시 메시지 수신 (개선된 백그라운드 처리)
 self.addEventListener('push', (event) => {
@@ -216,16 +363,16 @@ self.addEventListener('push', (event) => {
   const isSamsung = /SamsungBrowser/i.test(self.navigator.userAgent || '');
   const isMobile = isAndroid || isIOS;
   
-  // 기본 알림 옵션
+  // 기본 알림 옵션 (모바일 백그라운드 최적화)
   let options = {
     body: '새로운 메시지가 도착했습니다! 💬',
     icon: '/images/cat.jpg',
     badge: '/images/cat.jpg',
     tag: 'soso-chat-message',
     renotify: true,
-    requireInteraction: isMobile, // 모바일에서는 사용자 상호작용 필요
+    requireInteraction: true, // 모바일 백그라운드에서 안정적인 알림을 위해 true로 고정
     silent: false,
-    vibrate: isAndroid ? [300, 100, 300, 100, 300] : [200, 100, 200],
+    vibrate: isAndroid ? [400, 200, 400, 200, 400] : [300, 150, 300],
     data: {
       url: '/',
       timestamp: Date.now(),
@@ -301,14 +448,26 @@ self.addEventListener('push', (event) => {
       options.badge = '/images/cat.jpg';
     }
     
-    // 플랫폼별 알림 최적화 (iOS PWA 호환성 고려)
-    if (backgroundState.platform === 'mobile') {
-      options.requireInteraction = false; // iOS PWA 호환성을 위해 false로 설정
-      if (backgroundState.isPWA) {
+    // 플랫폼별 알림 최적화 (모바일 백그라운드 안정성 우선)
+    if (backgroundState.platform === 'mobile' || isMobile) {
+      // 모바일에서는 백그라운드 안정성을 위해 requireInteraction을 true로 유지
+      options.requireInteraction = true;
+      options.persistent = true;
+      
+      if (backgroundState.isPWA || isAndroidPWA) {
         options.tag = 'mobile-pwa-notification';
         options.vibrate = [500, 300, 500, 300, 500]; // PWA에서 더 강한 진동
+        options.renotify = true; // PWA에서 같은 태그도 다시 알림 표시
       } else {
         options.vibrate = [400, 200, 400, 200, 400]; // 모바일 브라우저 진동
+      }
+      
+      // iOS 특별 처리
+      if (isIOS) {
+        options.vibrate = [300, 150, 300, 150, 300];
+        // iOS에서는 이미지와 액션 제한
+        delete options.image;
+        options.actions = options.actions.slice(0, 2); // 최대 2개까지만
       }
     }
   }

@@ -1,7 +1,7 @@
 // types/chat.ts
 
 // 연결 상태 타입
-export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'failed';
+export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'reconnecting' | 'failed';
 
 // 사용자 타입
 export interface User {

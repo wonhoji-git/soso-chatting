@@ -63,7 +63,7 @@ export const createSafeNotification = (title: string, options?: NotificationOpti
       ...options,
     };
 
-    // 안드로이드 PWA 특별 설정
+    // 모바일 백그라운드 알림 안정성 향상
     if (isAndroid && isAndroidPWA) {
       notificationOptions = {
         ...notificationOptions,
@@ -73,8 +73,9 @@ export const createSafeNotification = (title: string, options?: NotificationOpti
 
       // 실험적 속성들은 별도로 처리 (TypeScript 타입 오류 방지)
       const extendedOptions = notificationOptions as any;
-      extendedOptions.vibrate = [300, 100, 300, 100, 300]; // 더 강한 진동 패턴
+      extendedOptions.vibrate = [500, 300, 500, 300, 500]; // 더 강한 진동 패턴
       extendedOptions.renotify = true; // 같은 태그의 알림도 다시 표시
+      extendedOptions.persistent = true; // 백그라운드에서 알림 유지
       extendedOptions.timestamp = Date.now();
       notificationOptions = extendedOptions;
 
@@ -95,11 +96,16 @@ export const createSafeNotification = (title: string, options?: NotificationOpti
         notificationOptions = advancedOptions;
       }
     } else {
-      // iOS 및 기타 플랫폼
-      notificationOptions.requireInteraction = isMobile;
+      // iOS 및 기타 플랫폼 - 백그라운드 안정성 향상
+      notificationOptions.requireInteraction = true; // 모든 모바일에서 true로 설정
       
-      // 기본 진동 패턴
-      if (isMobile && 'vibrate' in navigator) {
+      // iOS 특별 설정
+      if (isAndroid || /iPad|iPhone|iPod/.test(navigator.userAgent)) {
+        const iosOptions = notificationOptions as any;
+        iosOptions.vibrate = [300, 150, 300, 150, 300];
+        iosOptions.persistent = true; // iOS에서도 알림 유지
+        notificationOptions = iosOptions;
+      } else if (isMobile && 'vibrate' in navigator) {
         (notificationOptions as any).vibrate = [200, 100, 200];
       }
     }
@@ -115,8 +121,9 @@ export const createSafeNotification = (title: string, options?: NotificationOpti
     
     const notification = new Notification(title, notificationOptions);
     
-    // 안드로이드 PWA가 아닌 경우에만 자동 닫기
-    if (!isAndroid || !isAndroidPWA) {
+    // 모바일에서는 백그라운드 안정성을 위해 자동 닫기 하지 않음
+    if (!isMobile) {
+      // 데스크톱에서만 자동 닫기
       setTimeout(() => {
         try {
           notification.close();

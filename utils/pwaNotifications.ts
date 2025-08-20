@@ -24,54 +24,212 @@ export const registerServiceWorker = async (): Promise<ServiceWorkerRegistration
 };
 
 /**
- * 푸시 알림 권한 요청 (PWA)
+ * 푸시 알림 권한 요청 (PWA) - 개선된 버전
  */
 export const requestPWANotificationPermission = async (): Promise<boolean> => {
   if (typeof window === 'undefined') {
     return false;
   }
 
-  // iOS PWA 환경 감지
+  // 플랫폼별 PWA 환경 감지
   const isIOSPWA = (window.navigator as any).standalone === true;
-  const isAndroidPWA = window.matchMedia('(display-mode: standalone)').matches;
+  const isIOSSafari = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+  const isAndroidPWA = window.matchMedia('(display-mode: standalone)').matches || 
+                       window.matchMedia('(display-mode: fullscreen)').matches;
+  const isAndroid = /Android/i.test(navigator.userAgent);
+  const isChrome = /Chrome/i.test(navigator.userAgent);
+  const isSamsung = /SamsungBrowser/i.test(navigator.userAgent);
   const isPWA = isIOSPWA || isAndroidPWA;
 
-  console.log('📱 PWA Environment Check:', {
+  console.log('📱 Enhanced PWA Environment Check:', {
     isIOSPWA,
+    isIOSSafari,
     isAndroidPWA,
+    isAndroid,
+    isChrome,
+    isSamsung,
     isPWA,
-    userAgent: navigator.userAgent,
-    standalone: (window.navigator as any).standalone
+    userAgent: navigator.userAgent.substring(0, 100) + '...',
+    standalone: (window.navigator as any).standalone,
+    displayMode: window.matchMedia('(display-mode: standalone)').matches ? 'standalone' : 
+                 window.matchMedia('(display-mode: fullscreen)').matches ? 'fullscreen' : 'browser'
   });
 
   // Service Worker 지원 확인
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    console.log('❌ Push messaging not supported');
+  if (!('serviceWorker' in navigator)) {
+    console.log('❌ Service Worker not supported');
+    return false;
+  }
+
+  // 알림 API 지원 확인
+  if (!('Notification' in window)) {
+    console.log('❌ Notification API not supported');
     return false;
   }
 
   try {
-    // Service Worker 등록
-    const registration = await registerServiceWorker();
+    // Service Worker 등록 (플랫폼별 최적화)
+    const registration = await registerServiceWorkerWithRetry(3);
     if (!registration) {
-      console.log('❌ Service Worker registration failed');
+      console.log('❌ Service Worker registration failed after retries');
       return false;
     }
 
-    // 알림 권한 요청
-    const permission = await Notification.requestPermission();
-    console.log('🔔 Notification permission result:', permission);
+    // 현재 권한 상태 확인
+    let currentPermission = Notification.permission;
+    console.log('🔔 Current notification permission:', currentPermission);
+
+    // 이미 권한이 있으면 푸시 구독만 생성
+    if (currentPermission === 'granted') {
+      console.log('✅ Notification permission already granted');
+      const subscription = await subscribeToPush(registration);
+      return subscription !== null;
+    }
+
+    // 권한이 거부된 경우
+    if (currentPermission === 'denied') {
+      console.log('❌ Notification permission denied. User must enable manually in settings.');
+      return false;
+    }
+
+    // 권한 요청 (플랫폼별 처리)
+    let permission: NotificationPermission;
+    
+    if (isIOSPWA && isIOSSafari) {
+      // iOS PWA 특별 처리
+      console.log('🍎 Requesting iOS PWA notification permission...');
+      permission = await requestIOSPWAPermission();
+    } else if (isAndroid && (isChrome || isSamsung)) {
+      // 안드로이드 Chrome/Samsung 특별 처리
+      console.log('🤖 Requesting Android PWA notification permission...');
+      permission = await requestAndroidPWAPermission();
+    } else {
+      // 일반적인 권한 요청
+      console.log('🔔 Requesting standard notification permission...');
+      permission = await Notification.requestPermission();
+    }
+
+    console.log('🔔 Final notification permission result:', permission);
 
     if (permission === 'granted') {
       // 푸시 구독 생성
       const subscription = await subscribeToPush(registration);
-      return subscription !== null;
+      
+      if (subscription) {
+        // 테스트 알림 표시
+        await showTestNotification(isPWA, isAndroid);
+        return true;
+      }
     }
 
     return false;
   } catch (error) {
     console.error('❌ Failed to request PWA notification permission:', error);
     return false;
+  }
+};
+
+// Service Worker 등록 (재시도 포함)
+const registerServiceWorkerWithRetry = async (maxRetries: number): Promise<ServiceWorkerRegistration | null> => {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`🔧 Service Worker registration attempt ${attempt}/${maxRetries}`);
+      
+      const registration = await navigator.serviceWorker.register('/sw.js', {
+        scope: '/',
+        updateViaCache: 'all'
+      });
+      
+      // Service Worker가 활성화될 때까지 대기
+      await navigator.serviceWorker.ready;
+      
+      console.log('✅ Service Worker registered and ready');
+      return registration;
+      
+    } catch (error) {
+      console.error(`❌ Service Worker registration attempt ${attempt} failed:`, error);
+      
+      if (attempt < maxRetries) {
+        // 다음 시도 전 잠시 대기
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+      }
+    }
+  }
+  
+  return null;
+};
+
+// iOS PWA 권한 요청
+const requestIOSPWAPermission = async (): Promise<NotificationPermission> => {
+  return new Promise((resolve) => {
+    // iOS에서는 동기적 방식과 비동기적 방식을 모두 시도
+    if (typeof Notification.requestPermission === 'function') {
+      const result = Notification.requestPermission();
+      
+      if (result && typeof result.then === 'function') {
+        // Promise 기반 API
+        (result as Promise<NotificationPermission>).then(resolve);
+      } else {
+        // 동기적 결과
+        resolve(result as unknown as NotificationPermission);
+      }
+    } else if (typeof (Notification as any).requestPermission === 'function') {
+      // 구식 콜백 방식
+      (Notification as any).requestPermission(resolve);
+    } else {
+      resolve('denied');
+    }
+  });
+};
+
+// 안드로이드 PWA 권한 요청
+const requestAndroidPWAPermission = async (): Promise<NotificationPermission> => {
+  try {
+    // 안드로이드는 일반적인 Promise 방식 사용
+    const permission = await Notification.requestPermission();
+    return permission;
+  } catch (error) {
+    console.error('Android PWA permission request failed:', error);
+    return 'denied';
+  }
+};
+
+// 테스트 알림 표시
+const showTestNotification = async (isPWA: boolean, isAndroid: boolean): Promise<void> => {
+  try {
+    const title = isPWA ? '📱 PWA 알림 설정 완료!' : '🔔 알림 설정 완료!';
+    const options: NotificationOptions & { vibrate?: number[] } = {
+      body: '이제 새로운 메시지 알림을 받으실 수 있습니다.',
+      icon: '/images/cat.jpg',
+      badge: '/images/cat.jpg',
+      tag: 'setup-complete',
+      requireInteraction: true, // 모든 모바일에서 백그라운드 안정성을 위해 true
+      vibrate: isAndroid ? [400, 200, 400, 200, 400] : [300, 150, 300],
+      silent: false
+    };
+
+    const notification = new Notification(title, options);
+
+    notification.onclick = () => {
+      notification.close();
+      window.focus();
+    };
+
+    // 모바일에서는 백그라운드 안정성을 위해 자동 닫기 하지 않음
+    if (!isAndroid && typeof window !== 'undefined' && !/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+      // 데스크톱에서만 자동 닫기
+      setTimeout(() => {
+        try {
+          notification.close();
+        } catch (error) {
+          // 이미 닫혔거나 오류 발생 시 무시
+        }
+      }, 5000);
+    }
+
+    console.log('✅ Test notification displayed successfully');
+  } catch (error) {
+    console.warn('⚠️ Test notification failed, but permission was granted:', error);
   }
 };
 
