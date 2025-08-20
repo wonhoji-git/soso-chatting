@@ -28,64 +28,108 @@ class MessageBuffer {
   private setupVisibilityListener() {
     const handleVisibilityChange = () => {
       const wasVisible = this.isPageVisible;
-      this.isPageVisible = !document.hidden;
+      const currentlyVisible = this.getCurrentVisibilityState();
       
       console.log('📺 Page visibility changed:', {
         wasVisible,
-        isVisible: this.isPageVisible,
+        isVisible: currentlyVisible,
         visibilityState: document.visibilityState,
-        bufferedMessages: this.buffer.length
+        documentHidden: document.hidden,
+        hasFocus: document.hasFocus(),
+        bufferedMessages: this.buffer.length,
+        unreadCount: this.getUnreadCount()
       });
 
-      // 페이지가 다시 보이게 되면 버퍼링된 메시지들을 읽음 처리
-      if (!wasVisible && this.isPageVisible) {
-        this.markAllAsRead();
-        this.notifyVisibilityChangeListeners();
+      // 페이지가 다시 보이게 되면 버퍼링된 메시지들을 읽음 처리 (지연 처리)
+      if (!wasVisible && currentlyVisible) {
+        // 실제로 사용자가 돌아온 것을 확인하기 위해 짧은 지연 후 처리
+        setTimeout(() => {
+          if (this.getCurrentVisibilityState()) { // 다시 한 번 확인
+            console.log('✅ 사용자가 돌아왔음을 확인, 메시지 읽음 처리');
+            this.markAllAsRead();
+            this.updateLastUserActivity();
+            this.notifyVisibilityChangeListeners();
+          }
+        }, 500); // 0.5초 지연
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     
-    // 포커스 이벤트로도 처리 (일부 브라우저에서 visibilitychange가 제대로 작동하지 않을 때)
-    window.addEventListener('focus', () => {
-      if (!this.isPageVisible) {
-        this.isPageVisible = true;
-        this.markAllAsRead();
-        this.notifyVisibilityChangeListeners();
+    // 사용자 활동 감지 이벤트들 추가
+    const userActivityEvents = ['focus', 'click', 'keydown', 'touchstart', 'mousemove', 'scroll'];
+    
+    userActivityEvents.forEach(eventType => {
+      const handler = () => {
+        this.updateLastUserActivity();
+        const currentlyVisible = this.getCurrentVisibilityState();
+        
+        if (eventType === 'focus' && !this.isPageVisible && currentlyVisible) {
+          this.markAllAsRead();
+          this.notifyVisibilityChangeListeners();
+        }
+      };
+      
+      if (eventType === 'focus') {
+        window.addEventListener(eventType, handler);
+      } else {
+        document.addEventListener(eventType, handler, { passive: true });
       }
     });
 
+    // blur 이벤트는 별도로 처리
     window.addEventListener('blur', () => {
-      this.isPageVisible = false;
+      const currentlyVisible = this.getCurrentVisibilityState();
+      console.log('👁️ Window blur event:', {
+        wasVisible: this.isPageVisible,
+        currentlyVisible
+      });
     });
+  }
+
+  // 마지막 사용자 활동 시간 업데이트
+  private updateLastUserActivity(): void {
+    const now = Date.now();
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('lastUserActivity', now.toString());
+    }
   }
 
   // 새 메시지를 버퍼에 추가 (개선된 버전)
   addMessage(message: Omit<BufferedMessage, 'receivedAt' | 'isRead'>): boolean {
-    // 더 정교한 중복 체크 (ID와 타임스탬프 기반)
+    // 안전한 중복 체크 - ID만 체크하여 정상 메시지 보호
     const isDuplicate = this.buffer.some(buffered => {
-      const isSameId = buffered.id === message.id;
-      const isSameUser = buffered.userId === message.userId;
-      const isSameText = buffered.text === message.text;
-      const timeDiff = Math.abs(new Date(buffered.timestamp).getTime() - new Date(message.timestamp).getTime());
-      
-      // ID가 같거나, 같은 사용자가 같은 텍스트를 3초 내에 보낸 경우 중복으로 판단
-      return isSameId || (isSameUser && isSameText && timeDiff < 3000);
+      // 정확한 ID 일치만 중복으로 처리
+      return buffered.id === message.id;
     });
 
     if (isDuplicate) {
-      console.log('⚠️ 중복 메시지 버퍼링 스킵:', {
-        messageId: message.id,
-        userName: message.userName,
-        text: message.text.substring(0, 30) + '...'
-      });
-      return false;
+      // 추가 안전 체크: 정말 중복인지 시간 기반 확인
+      const existingMsg = this.buffer.find(buffered => buffered.id === message.id);
+      if (existingMsg && Date.now() - existingMsg.receivedAt < 1000) {
+        // 1초 내의 정확한 중복만 버림
+        console.log('⚠️ 진짜 중복 메시지 버퍼링 스킵:', {
+          messageId: message.id,
+          userName: message.userName,
+          timeDiff: Date.now() - existingMsg.receivedAt
+        });
+        return false;
+      } else {
+        // 시간 간격이 크면 새 메시지로 처리 (재시도 가능)
+        console.log('🔄 동일 ID이지만 시간 차이로 인한 새 메시지로 처리:', {
+          messageId: message.id,
+          userName: message.userName,
+          timeDiff: existingMsg ? Date.now() - existingMsg.receivedAt : 'N/A'
+        });
+      }
     }
 
+    // 더 정확한 읽음 상태 결정
+    const isCurrentlyVisible = this.getCurrentVisibilityState();
     const bufferedMessage: BufferedMessage = {
       ...message,
       receivedAt: Date.now(),
-      isRead: this.isPageVisible // 페이지가 보이면 즉시 읽음 처리
+      isRead: isCurrentlyVisible && this.isUserInteracting() // 사용자가 실제로 활성화되어 있을 때만 읽음 처리
     };
 
     this.buffer.push(bufferedMessage);
@@ -100,7 +144,8 @@ class MessageBuffer {
     console.log('📬 메시지 버퍼에 추가:', {
       messageId: message.id,
       userName: message.userName,
-      isPageVisible: this.isPageVisible,
+      isCurrentlyVisible,
+      isUserInteracting: this.isUserInteracting(),
       bufferSize: this.buffer.length,
       isRead: bufferedMessage.isRead,
       timestamp: new Date(message.timestamp).toLocaleTimeString()
@@ -110,6 +155,62 @@ class MessageBuffer {
     this.notifyServiceWorker();
 
     return true;
+  }
+
+  // 현재 페이지 가시성 상태를 더 정확하게 확인
+  private getCurrentVisibilityState(): boolean {
+    if (typeof document === 'undefined') return true;
+    
+    // 여러 방법으로 가시성 확인
+    const documentVisible = !document.hidden;
+    const windowFocused = document.hasFocus();
+    const visibilityStateValue = document.visibilityState;
+    const visibilityIsVisible = visibilityStateValue === 'visible';
+    
+    // 플랫폼별 다른 조건 적용
+    let isVisible: boolean;
+    if (typeof navigator !== 'undefined' && /Mobi|Android/i.test(navigator.userAgent)) {
+      // 모바일: documentVisible만으로도 충분 (포커스 체크가 부정확할 수 있음)
+      isVisible = documentVisible && visibilityIsVisible;
+    } else {
+      // 데스크톱: 모든 조건 만족해야 함
+      isVisible = documentVisible && windowFocused && visibilityIsVisible;
+    }
+    
+    // 상태가 변경되었다면 업데이트
+    if (this.isPageVisible !== isVisible) {
+      console.log('👁️ 페이지 가시성 상태 업데이트:', {
+        from: this.isPageVisible,
+        to: isVisible,
+        documentVisible,
+        windowFocused,
+        visibilityState: visibilityStateValue,
+        visibilityIsVisible,
+        platform: typeof navigator !== 'undefined' && /Mobi|Android/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
+        finalDecision: isVisible
+      });
+      this.isPageVisible = isVisible;
+    }
+    
+    return isVisible;
+  }
+
+  // 사용자가 실제로 상호작용하고 있는지 확인
+  private isUserInteracting(): boolean {
+    // 마지막 사용자 활동으로부터 30초 이내인지 확인
+    const lastActivity = this.getLastUserActivity();
+    const timeSinceActivity = Date.now() - lastActivity;
+    return timeSinceActivity < 30000; // 30초
+  }
+
+  // 마지막 사용자 활동 시간 (단순 구현)
+  private getLastUserActivity(): number {
+    // localStorage를 통해 마지막 활동 시간 추적
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('lastUserActivity');
+      return stored ? parseInt(stored) : Date.now();
+    }
+    return Date.now();
   }
 
   // Service Worker에 버퍼 상태 알림
@@ -208,25 +309,47 @@ class MessageBuffer {
     return removedCount;
   }
 
-  // 디버그 정보 반환
+  // 디버그 정보 반환 (강화됨)
   getDebugInfo() {
+    const lastActivity = this.getLastUserActivity();
     return {
       bufferSize: this.buffer.length,
       unreadCount: this.getUnreadCount(),
       isPageVisible: this.isPageVisible,
+      currentVisibilityState: this.getCurrentVisibilityState(),
+      isUserInteracting: this.isUserInteracting(),
+      lastUserActivity: new Date(lastActivity).toLocaleTimeString(),
+      timeSinceLastActivity: Math.round((Date.now() - lastActivity) / 1000),
       messages: this.buffer.map(msg => ({
         id: msg.id,
         userName: msg.userName,
         text: msg.text.substring(0, 50) + (msg.text.length > 50 ? '...' : ''),
         isRead: msg.isRead,
-        receivedAt: new Date(msg.receivedAt).toLocaleTimeString()
-      }))
+        receivedAt: new Date(msg.receivedAt).toLocaleTimeString(),
+        ageInSeconds: Math.round((Date.now() - msg.receivedAt) / 1000)
+      })),
+      browserInfo: {
+        hidden: typeof document !== 'undefined' ? document.hidden : null,
+        visibilityState: typeof document !== 'undefined' ? document.visibilityState : null,
+        hasFocus: typeof document !== 'undefined' ? document.hasFocus() : null
+      }
     };
   }
 }
 
 // 싱글톤 인스턴스
 export const messageBuffer = new MessageBuffer();
+
+// 사용자 활동 추적을 위한 초기화 (브라우저 환경에서만)
+if (typeof window !== 'undefined') {
+  // 페이지 로드 시 마지막 활동 시간 초기화
+  localStorage.setItem('lastUserActivity', Date.now().toString());
+  
+  // 정기적으로 오래된 버퍼 메시지 정리 (2분마다)
+  setInterval(() => {
+    messageBuffer.cleanupOldMessages();
+  }, 2 * 60 * 1000);
+}
 
 // 전역 접근을 위한 함수들
 export const addMessageToBuffer = (message: Omit<BufferedMessage, 'receivedAt' | 'isRead'>): boolean => {

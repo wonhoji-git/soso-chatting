@@ -207,40 +207,60 @@ class BackgroundDetection {
     const timeSinceActivity = now - this.lastUserActivity;
     const actualVisibility = !document.hidden;
     const actualFocus = document.hasFocus();
+    const actualVisibilityState = document.visibilityState;
 
-    // 상태 불일치 감지 및 수정
-    if (this.state.isVisible !== actualVisibility || this.state.hasFocus !== actualFocus) {
+    // 상태 불일치 감지 및 수정 (더 상세한 로그)
+    const hasInconsistency = 
+      this.state.isVisible !== actualVisibility || 
+      this.state.hasFocus !== actualFocus ||
+      this.state.visibilityState !== actualVisibilityState;
+
+    if (hasInconsistency) {
       console.log('🔧 State inconsistency detected, correcting:', {
-        stored: { visible: this.state.isVisible, focus: this.state.hasFocus },
-        actual: { visible: actualVisibility, focus: actualFocus },
-        timeSinceActivity,
-        platform: this.state.platform
+        stored: { 
+          visible: this.state.isVisible, 
+          focus: this.state.hasFocus,
+          visibilityState: this.state.visibilityState,
+          appState: this.state.appState
+        },
+        actual: { 
+          visible: actualVisibility, 
+          focus: actualFocus,
+          visibilityState: actualVisibilityState
+        },
+        timeSinceActivity: Math.round(timeSinceActivity / 1000),
+        platform: this.state.platform,
+        isPWA: this.state.isPWA
       });
 
       const wasBackground = this.state.isBackground;
-      const isNowBackground = !actualVisibility || !actualFocus;
+      const isNowBackground = this.determineBackgroundState(actualVisibility, actualFocus, timeSinceActivity);
       
       this.setState({
         isVisible: actualVisibility,
         hasFocus: actualFocus,
+        visibilityState: actualVisibilityState,
         isBackground: isNowBackground,
-        visibilityState: document.visibilityState,
-        appState: isNowBackground ? 'background' : 'active'
+        appState: isNowBackground ? 'background' : 'active',
+        lastActivityTime: this.lastUserActivity
       });
 
-      // Service Worker에 상태 변경 알림
-      this.notifyServiceWorker({
-        isBackground: isNowBackground,
-        platform: this.state.platform,
-        isPWA: this.state.isPWA,
-        appState: isNowBackground ? 'background' : 'active'
-      });
+      // Service Worker에 상태 변경 알림 (상태가 변경된 경우만)
+      if (wasBackground !== isNowBackground) {
+        this.notifyServiceWorker({
+          isBackground: isNowBackground,
+          platform: this.state.platform,
+          isPWA: this.state.isPWA,
+          appState: isNowBackground ? 'background' : 'active',
+          trigger: 'health-check-inconsistency'
+        });
+      }
     }
 
     // 모바일에서 더 엄격한 백그라운드 감지
     const isMobileBackground = this.detectMobileBackgroundState();
     if (isMobileBackground && this.state.appState !== 'background') {
-      console.log('📱 Mobile background state detected');
+      console.log('📱 Mobile background state detected via specialized detection');
       this.setState({
         appState: 'background',
         isBackground: true
@@ -250,18 +270,57 @@ class BackgroundDetection {
         isBackground: true,
         platform: this.state.platform,
         isPWA: this.state.isPWA,
-        appState: 'background'
+        appState: 'background',
+        trigger: 'mobile-background-detection'
       });
     }
 
-    // 장시간 비활성 감지 (모바일에서는 더 짧게)
-    const inactiveThreshold = this.state.platform === 'mobile' ? 20000 : 40000; // 20초/40초로 단축
-    if (timeSinceActivity > inactiveThreshold && this.state.appState === 'active') {
-      console.log('😴 Long inactivity detected, marking as background');
+    // 장시간 비활성 감지 (플랫폼별 다른 임계값)
+    const inactiveThresholds = {
+      mobile: this.state.isPWA ? 15000 : 20000,  // PWA: 15초, 모바일 브라우저: 20초
+      tablet: 30000,  // 태블릿: 30초
+      desktop: 45000  // 데스크킱: 45초
+    };
+    
+    const threshold = inactiveThresholds[this.state.platform] || inactiveThresholds.desktop;
+    
+    if (timeSinceActivity > threshold && this.state.appState === 'active') {
+      console.log('😴 Long inactivity detected, marking as background:', {
+        timeSinceActivity: Math.round(timeSinceActivity / 1000) + 's',
+        threshold: Math.round(threshold / 1000) + 's',
+        platform: this.state.platform,
+        isPWA: this.state.isPWA
+      });
+      
       this.setState({
         appState: 'background',
         isBackground: true
       });
+      
+      this.notifyServiceWorker({
+        isBackground: true,
+        platform: this.state.platform,
+        isPWA: this.state.isPWA,
+        appState: 'background',
+        trigger: 'inactivity-timeout'
+      });
+    }
+  }
+
+  // 백그라운드 상태를 더 정교하게 결정하는 함수 (개선됨)
+  private determineBackgroundState(isVisible: boolean, hasFocus: boolean, timeSinceActivity: number): boolean {
+    // 여러 조건을 종합적으로 고려
+    const visibilityBased = !isVisible;
+    const focusBased = !hasFocus;
+    const activityBased = timeSinceActivity > 30000; // 30초 이상 비활성
+    
+    // 모바일에서는 더 엄격하게, 데스크킱에서는 더 여유롭게
+    if (this.state.platform === 'mobile') {
+      // 모바일: visibility 또는 focus 잃으면 백그라운드
+      return visibilityBased || focusBased;
+    } else {
+      // 데스크킱/태블릿: visibility와 focus 둘 다 잃어야 백그라운드
+      return visibilityBased && focusBased;
     }
   }
 
@@ -283,18 +342,50 @@ class BackgroundDetection {
     return isDocumentHidden;
   }
 
-  // Service Worker에 상태 변경 알림
+  // Service Worker에 상태 변경 알림 (강화된 에러 처리)
   private notifyServiceWorker(state: any) {
     if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
       try {
-        navigator.serviceWorker.controller.postMessage({
+        const message = {
           type: 'BACKGROUND_STATE_CHANGE',
-          state
+          state: {
+            ...state,
+            timestamp: Date.now(),
+            source: 'background-detection'
+          }
+        };
+        
+        navigator.serviceWorker.controller.postMessage(message);
+        console.log('📤 Notified Service Worker of state change:', {
+          ...state,
+          timestamp: new Date().toLocaleTimeString()
         });
-        console.log('📤 Notified Service Worker of state change:', state);
       } catch (error) {
         console.warn('Failed to notify Service Worker:', error);
+        
+        // Service Worker 통신 실패 시 대체 방법 시도
+        this.fallbackNotification(state);
       }
+    } else {
+      // Service Worker가 준비되지 않았을 때 대체 방법
+      console.warn('Service Worker not ready, using fallback notification');
+      this.fallbackNotification(state);
+    }
+  }
+
+  // Service Worker 통신 실패 시 대체 방법
+  private fallbackNotification(state: any) {
+    // localStorage를 통해 상태 저장
+    try {
+      const fallbackData = {
+        state,
+        timestamp: Date.now(),
+        method: 'fallback'
+      };
+      localStorage.setItem('backgroundState', JSON.stringify(fallbackData));
+      console.log('🔄 Using localStorage fallback for state notification');
+    } catch (error) {
+      console.error('Fallback notification also failed:', error);
     }
   }
 
@@ -352,12 +443,33 @@ class BackgroundDetection {
   }
 
   public getDebugInfo() {
+    const timeSinceActivity = Date.now() - this.lastUserActivity;
     return {
       state: this.state,
       listenerCount: this.listeners.length,
       lastUserActivity: new Date(this.lastUserActivity).toISOString(),
-      timeSinceActivity: Date.now() - this.lastUserActivity,
-      healthCheckActive: !!this.checkInterval
+      timeSinceActivity,
+      timeSinceActivityFormatted: Math.round(timeSinceActivity / 1000) + 's',
+      healthCheckActive: !!this.checkInterval,
+      currentBrowserState: typeof document !== 'undefined' ? {
+        hidden: document.hidden,
+        visibilityState: document.visibilityState,
+        hasFocus: document.hasFocus(),
+        userAgent: navigator.userAgent.substring(0, 100) + '...'
+      } : null,
+      detectionThresholds: {
+        mobile: this.state.isPWA ? '15s' : '20s',
+        tablet: '30s',
+        desktop: '45s',
+        current: this.state.platform === 'mobile' ? 
+                 (this.state.isPWA ? '15s' : '20s') : 
+                 this.state.platform === 'tablet' ? '30s' : '45s'
+      },
+      serviceWorkerStatus: {
+        supported: 'serviceWorker' in navigator,
+        registered: 'serviceWorker' in navigator && !!navigator.serviceWorker.controller,
+        ready: false // TODO: 실제 준비 상태 확인
+      }
     };
   }
 

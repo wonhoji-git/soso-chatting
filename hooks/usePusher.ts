@@ -209,23 +209,32 @@ export const usePusher = () => {
     }
   }, []);
 
-  // 중복 알림 방지 함수
+  // 안전한 알림 중복 방지 함수
   const isNotificationAlreadyShown = useCallback((messageId: string): boolean => {
-    const alreadyShown = recentNotificationIds.current.has(messageId);
+    const now = Date.now();
+    const recentTimeKey = `${messageId}_${Math.floor(now / 3000)}`; // 3초 단위 창
+    const alreadyShown = recentNotificationIds.current.has(recentTimeKey);
     
     if (!alreadyShown) {
-      // 새로운 알림 ID 추가
-      recentNotificationIds.current.add(messageId);
+      // 새로운 알림 시간 키 추가
+      recentNotificationIds.current.add(recentTimeKey);
       
-      // 10초 후 ID 제거 (메모리 누수 방지)
+      // 30초 후 제거 (더 너그러운 정리)
       setTimeout(() => {
-        recentNotificationIds.current.delete(messageId);
-      }, 10000);
+        recentNotificationIds.current.delete(recentTimeKey);
+      }, 30000);
       
-      console.log('🔔 New notification allowed for message:', messageId);
+      console.log('🔔 New notification allowed:', {
+        messageId,
+        timeKey: recentTimeKey,
+        recentCount: recentNotificationIds.current.size
+      });
       return false;
     } else {
-      console.log('⚠️ Duplicate notification blocked for message:', messageId);
+      console.log('⚠️ Recent notification exists (3s window):', {
+        messageId,
+        timeKey: recentTimeKey
+      });
       return true;
     }
   }, []);
@@ -696,12 +705,31 @@ export const usePusher = () => {
                 const isInBackground = isAppInBackground();
                 const isActive = isAppActive();
                 
-                // 백그라운드 조건: 기존 방식 OR 새로운 방식
-                const shouldShowBackgroundNotification = isPageHidden || isInBackground || !isActive;
+                // 더 정확한 백그라운드 상태 판단
+                const shouldShowBackgroundNotification = (() => {
+                  // 여러 조건을 종합하여 판단
+                  const conditions = {
+                    pageHidden: isPageHidden,
+                    appInBackground: isInBackground,
+                    notActive: !isActive,
+                    noFocus: typeof document !== 'undefined' ? !document.hasFocus() : false
+                  };
+                  
+                  // 모바일에서는 더 민감하게, 데스크톱에서는 더 관대하게
+                  if (backgroundState.platform === 'mobile') {
+                    return conditions.pageHidden || conditions.appInBackground || conditions.noFocus;
+                  } else {
+                    return conditions.pageHidden && conditions.appInBackground;
+                  }
+                })();
                 
-                // 중복 알림 체크 (백그라운드에서만)
+                // 중복 알림 체크 (백그라운드에서만) - 개선된 로직
                 if (shouldShowBackgroundNotification && isNotificationAlreadyShown(message.id)) {
-                  console.log('⚠️ Skipping duplicate notification for message:', message.id);
+                  console.log('⚠️ Skipping duplicate notification for message:', {
+                    messageId: message.id,
+                    userName: message.userName,
+                    platform: backgroundState.platform
+                  });
                   // 메시지는 추가하되 알림만 스킵
                   const newMessages = [...prev, message];
                   const limitedMessages = newMessages.length > 100 ? newMessages.slice(-100) : newMessages;

@@ -76,7 +76,17 @@ self.addEventListener('message', (event) => {
     }
   } else if (event.data.type === 'BACKGROUND_STATE_CHANGE') {
     // 강화된 백그라운드 상태 업데이트
-    backgroundState = event.data.state;
+    const previousBackgroundState = backgroundState.isBackground;
+    const previousAppState = backgroundState.appState;
+    
+    backgroundState = {
+      ...event.data.state,
+      lastUpdated: Date.now(),
+      previousState: {
+        isBackground: previousBackgroundState,
+        appState: previousAppState
+      }
+    };
     isPageVisible = !backgroundState.isBackground;
     
     console.log('[SW] Background state updated:', {
@@ -84,13 +94,30 @@ self.addEventListener('message', (event) => {
       isBackground: backgroundState.isBackground,
       platform: backgroundState.platform,
       isPWA: backgroundState.isPWA,
-      isPageVisible
+      isPageVisible,
+      trigger: backgroundState.trigger || 'unknown',
+      previousState: backgroundState.previousState,
+      stateChanged: previousBackgroundState !== backgroundState.isBackground
     });
     
-    // 앱이 다시 활성화되면 버퍼된 메시지 전송
-    if (backgroundState.appState === 'active' && backgroundMessageBuffer.length > 0) {
-      console.log('[SW] App became active, sending buffered messages');
-      sendBufferedMessagesToClient();
+    // 상태가 실제로 변경된 경우에만 처리
+    const becameActive = previousBackgroundState && !backgroundState.isBackground;
+    const becameBackground = !previousBackgroundState && backgroundState.isBackground;
+    
+    if (becameActive && backgroundMessageBuffer.length > 0) {
+      console.log('[SW] App became active from background, sending buffered messages:', {
+        messageCount: backgroundMessageBuffer.length,
+        trigger: backgroundState.trigger
+      });
+      // 약간의 지연을 두고 메시지 전송 (앱이 완전히 활성화될 시간)
+      setTimeout(() => {
+        sendBufferedMessagesToClient();
+      }, 100);
+    } else if (becameBackground) {
+      console.log('[SW] App went to background:', {
+        trigger: backgroundState.trigger,
+        currentBufferSize: backgroundMessageBuffer.length
+      });
     }
   } else if (event.data.type === 'GET_BUFFERED_MESSAGES') {
     // 클라이언트가 버퍼된 메시지를 요청할 때
@@ -120,8 +147,10 @@ async function sendBufferedMessagesToClient() {
       return;
     }
     
-    // 처리되지 않은 메시지만 전송
-    const unprocessedMessages = backgroundMessageBuffer.filter(msg => !msg.processed);
+    // 처리되지 않은 메시지만 전송 (시간 순으로 정렬)
+    const unprocessedMessages = backgroundMessageBuffer
+      .filter(msg => !msg.processed)
+      .sort((a, b) => a.receivedAt - b.receivedAt);
     
     if (unprocessedMessages.length === 0) {
       console.log('[SW] No unprocessed messages to send');
@@ -131,23 +160,36 @@ async function sendBufferedMessagesToClient() {
     console.log('[SW] Sending buffered messages to clients:', {
       totalMessages: backgroundMessageBuffer.length,
       unprocessedMessages: unprocessedMessages.length,
-      clientCount: clients.length
+      clientCount: clients.length,
+      oldestMessage: unprocessedMessages.length > 0 ? new Date(unprocessedMessages[0].receivedAt).toLocaleTimeString() : null,
+      newestMessage: unprocessedMessages.length > 0 ? new Date(unprocessedMessages[unprocessedMessages.length - 1].receivedAt).toLocaleTimeString() : null
     });
     
     let successCount = 0;
     
+    // 모든 클라이언트에게 순차적으로 메시지 전송
     for (const client of clients) {
       try {
-        client.postMessage({
+        // 클라이언트의 상태 확인 (가능한 경우)
+        const clientUrl = client.url || 'unknown';
+        
+        await client.postMessage({
           type: 'BUFFERED_MESSAGES',
           messages: unprocessedMessages,
           timestamp: Date.now(),
           bufferInfo: {
             total: backgroundMessageBuffer.length,
-            sent: unprocessedMessages.length
+            sent: unprocessedMessages.length,
+            clientUrl: clientUrl.substring(clientUrl.lastIndexOf('/') + 1) || 'main'
+          },
+          recoveryInfo: {
+            timeSpentInBackground: Date.now() - (unprocessedMessages[0]?.receivedAt || Date.now()),
+            messageCount: unprocessedMessages.length
           }
         });
         successCount++;
+        
+        console.log(`[SW] Messages sent to client: ${clientUrl}`);
       } catch (clientError) {
         console.warn('[SW] Failed to send message to client:', clientError);
       }
@@ -159,12 +201,13 @@ async function sendBufferedMessagesToClient() {
         const bufferMsg = backgroundMessageBuffer.find(bMsg => bMsg.id === msg.id);
         if (bufferMsg) {
           bufferMsg.processed = true;
+          bufferMsg.processedAt = Date.now();
         }
       });
       
-      console.log(`[SW] Successfully sent messages to ${successCount} clients`);
+      console.log(`[SW] Successfully sent ${unprocessedMessages.length} messages to ${successCount} clients`);
       
-      // 3초 후 처리된 메시지들 정리
+      // 5초 후 처리된 메시지들 정리 (시간 여유)
       setTimeout(() => {
         const beforeLength = backgroundMessageBuffer.length;
         backgroundMessageBuffer = backgroundMessageBuffer.filter(msg => !msg.processed);
@@ -173,7 +216,7 @@ async function sendBufferedMessagesToClient() {
         if (beforeLength !== afterLength) {
           console.log(`[SW] Cleaned up ${beforeLength - afterLength} processed messages`);
         }
-      }, 3000);
+      }, 5000);
     }
     
   } catch (error) {
@@ -242,21 +285,38 @@ function handleBackgroundMessage(messageData) {
   // 메시지 수신 = 연결이 살아있음을 의미
   lastHeartbeatTime = Date.now();
   
-  // 중복 메시지 방지
-  const isDuplicate = backgroundMessageBuffer.some(msg => 
-    msg.id === messageData.id && Math.abs(msg.receivedAt - Date.now()) < 1000
-  );
+  // 안전한 중복 메시지 방지 - ID만 체크
+  const isDuplicate = backgroundMessageBuffer.some(msg => {
+    // ID가 정확히 일치하는 경우만 중복으로 간주
+    return msg.id === messageData.id;
+  });
   
+  // 추가 안전 체크: 아주 최근(반 초)의 동일한 ID만 중복 처리
   if (isDuplicate) {
-    console.log('[SW] Duplicate message ignored:', messageData.id);
-    return;
+    const existingMsg = backgroundMessageBuffer.find(msg => msg.id === messageData.id);
+    if (existingMsg && Date.now() - existingMsg.receivedAt < 500) {
+      // 0.5초 내의 정확한 ID 일치만 중복으로 처리
+      console.log('[SW] True duplicate message ignored (same ID within 0.5s):', {
+        id: messageData.id,
+        timeDiff: Date.now() - existingMsg.receivedAt
+      });
+      return;
+    } else {
+      // 시간 차이가 큰 경우 새 메시지로 처리 (재시도 가능)
+      console.log('[SW] Message with same ID but different timing, allowing:', {
+        id: messageData.id,
+        timeDiff: existingMsg ? Date.now() - existingMsg.receivedAt : 'N/A'
+      });
+    }
   }
+  
   
   // 메시지를 버퍼에 추가
   const bufferedMessage = {
     ...messageData,
     receivedAt: Date.now(),
-    processed: false
+    processed: false,
+    notificationShown: false // 알림 표시 여부 추가
   };
   
   backgroundMessageBuffer.push(bufferedMessage);
@@ -271,32 +331,58 @@ function handleBackgroundMessage(messageData) {
     userName: messageData.userName,
     bufferSize: backgroundMessageBuffer.length,
     backgroundState: backgroundState.appState,
-    isBackground: backgroundState.isBackground
+    isBackground: backgroundState.isBackground,
+    isPageVisible
   });
   
-  // 백그라운드 상태에서만 알림 표시를 위한 추가 처리
-  if (backgroundState.isBackground || !isPageVisible) {
+  // 더 정확한 백그라운드 상태 감지
+  const isActuallyInBackground = checkIfActuallyInBackground();
+  if (isActuallyInBackground && !bufferedMessage.notificationShown) {
     console.log('[SW] Processing background message for notification');
     scheduleBackgroundNotification(messageData);
+    bufferedMessage.notificationShown = true;
   }
 }
 
-// 백그라운드 알림 스케줄링 (중복 방지 포함)
+// 실제 백그라운드 상태를 더 정확하게 확인하는 함수
+function checkIfActuallyInBackground() {
+  // 여러 조건을 종합적으로 판단
+  const stateBasedCheck = backgroundState.isBackground || backgroundState.appState === 'background';
+  const visibilityBasedCheck = !isPageVisible;
+  const timeBasedCheck = Date.now() - lastHeartbeatTime > 10000; // 10초 이상 하트비트 없음
+  
+  // 세 가지 중 하나라도 true면 백그라운드로 간주
+  const result = stateBasedCheck || visibilityBasedCheck || timeBasedCheck;
+  
+  console.log('[SW] Background state check:', {
+    stateBasedCheck,
+    visibilityBasedCheck,
+    timeBasedCheck,
+    finalResult: result
+  });
+  
+  return result;
+}
+
+// 백그라운드 알림 스케줄링 (안전한 중복 방지)
 function scheduleBackgroundNotification(messageData) {
-  // 최근 알림 중복 방지 (같은 사용자의 메시지 5초 내 중복 차단)
-  const recentNotificationKey = `${messageData.userId}_${Math.floor(Date.now() / 5000)}`;
+  // 더 안전한 중복 방지: 정확한 메시지 ID + 짧은 시간 창
+  const recentNotificationKey = `${messageData.id}_${Math.floor(Date.now() / 2000)}`; // 2초 단위
   
   if (recentNotifications.has(recentNotificationKey)) {
-    console.log('[SW] Recent notification exists, skipping:', recentNotificationKey);
+    console.log('[SW] Recent notification exists for same message, skipping:', {
+      messageId: messageData.id,
+      key: recentNotificationKey
+    });
     return;
   }
   
   recentNotifications.add(recentNotificationKey);
   
-  // 5분 후 정리
+  // 2분 후 정리 (더 빠른 정리)
   setTimeout(() => {
     recentNotifications.delete(recentNotificationKey);
-  }, 5 * 60 * 1000);
+  }, 2 * 60 * 1000);
   
   // 알림 데이터 준비
   const notificationData = {
