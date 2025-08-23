@@ -1,21 +1,110 @@
 // app/page.tsx
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import AvatarSelector from '@/components/AvatarSelector';
 import NameInput from '@/components/NameInput';
 import ChatRoom from '@/components/ChatRoom';
 import { PusherProvider } from '@/contexts/PusherContext';
 import { User } from '@/types/chat';
 
+// 사용자 세션 저장 키
+const USER_SESSION_KEY = 'soso-chat-user-session';
+const SESSION_EXPIRY_HOURS = 24; // 24시간 후 만료
+
+interface UserSession {
+  user: User;
+  step: 'avatar' | 'name' | 'chat';
+  selectedAvatar: string;
+  timestamp: number;
+  expiresAt: number;
+}
+
 export default function Home() {
   const [step, setStep] = useState<'avatar' | 'name' | 'chat'>('avatar');
   const [selectedAvatar, setSelectedAvatar] = useState<string>('');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // 세션 저장 함수
+  const saveUserSession = useCallback((user: User | null, currentStep: 'avatar' | 'name' | 'chat', avatar: string = '') => {
+    if (!user && currentStep === 'avatar') {
+      // 로그아웃이나 초기 상태면 세션 삭제
+      localStorage.removeItem(USER_SESSION_KEY);
+      return;
+    }
+
+    if (user) {
+      const session: UserSession = {
+        user,
+        step: currentStep,
+        selectedAvatar: avatar,
+        timestamp: Date.now(),
+        expiresAt: Date.now() + (SESSION_EXPIRY_HOURS * 60 * 60 * 1000)
+      };
+
+      try {
+        localStorage.setItem(USER_SESSION_KEY, JSON.stringify(session));
+        console.log('💾 User session saved:', {
+          user: user.name,
+          step: currentStep,
+          expiresIn: Math.round((session.expiresAt - Date.now()) / (60 * 60 * 1000)) + 'h'
+        });
+      } catch (error) {
+        console.warn('Failed to save user session:', error);
+      }
+    }
+  }, []);
+
+  // 세션 복구 함수
+  const restoreUserSession = useCallback(() => {
+    try {
+      const stored = localStorage.getItem(USER_SESSION_KEY);
+      if (!stored) {
+        setIsLoading(false);
+        return;
+      }
+
+      const session: UserSession = JSON.parse(stored);
+      const now = Date.now();
+
+      // 만료 확인
+      if (now > session.expiresAt) {
+        console.log('🕐 User session expired, removing...');
+        localStorage.removeItem(USER_SESSION_KEY);
+        setIsLoading(false);
+        return;
+      }
+
+      // 세션이 유효하면 상태 복구
+      console.log('🔄 Restoring user session:', {
+        user: session.user.name,
+        step: session.step,
+        timeRemaining: Math.round((session.expiresAt - now) / (60 * 60 * 1000)) + 'h',
+        backgroundDuration: Math.round((now - session.timestamp) / 1000) + 's'
+      });
+
+      setCurrentUser(session.user);
+      setSelectedAvatar(session.selectedAvatar);
+      setStep(session.step);
+
+    } catch (error) {
+      console.warn('Failed to restore user session:', error);
+      localStorage.removeItem(USER_SESSION_KEY);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // 컴포넌트 마운트 시 세션 복구
+  useEffect(() => {
+    restoreUserSession();
+  }, [restoreUserSession]);
 
   const handleAvatarSelect = (avatar: string) => {
     setSelectedAvatar(avatar);
     setStep('name');
+    // 아바타 선택 단계에서는 세션 저장하지 않음 (완료되지 않은 상태)
   };
 
   const handleNameSubmit = (name: string) => {
@@ -31,6 +120,9 @@ export default function Home() {
     };
     setCurrentUser(user);
     setStep('chat');
+    
+    // 채팅 진입 시 세션 저장
+    saveUserSession(user, 'chat', selectedAvatar);
   };
 
   const handleLogout = useCallback(() => {
@@ -38,7 +130,10 @@ export default function Home() {
     setCurrentUser(null);
     setSelectedAvatar('');
     setStep('avatar');
-  }, []);
+    
+    // 세션 삭제
+    saveUserSession(null, 'avatar');
+  }, [saveUserSession]);
 
   if (step === 'avatar') {
     return (
@@ -71,6 +166,19 @@ export default function Home() {
             </p>
           </div>
           <NameInput onNameSubmit={handleNameSubmit} />
+        </div>
+      </div>
+    );
+  }
+
+  // 로딩 상태 표시
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
+          <p className="text-white text-lg">세션을 복구하는 중...</p>
+          <p className="text-white/70 text-sm mt-2">잠시만 기다려주세요</p>
         </div>
       </div>
     );

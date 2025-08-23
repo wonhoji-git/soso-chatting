@@ -1,6 +1,8 @@
 // utils/messageBuffer.ts
 // 백그라운드에서 수신된 메시지들을 버퍼링하여 관리
 
+import { memoryOptimizer } from './memoryOptimizer';
+
 export interface BufferedMessage {
   id: string;
   text: string;
@@ -16,12 +18,13 @@ class MessageBuffer {
   private buffer: BufferedMessage[] = [];
   private isPageVisible: boolean = true;
   private visibilityChangeListeners: (() => void)[] = [];
-  private maxBufferSize = 50; // 최대 버퍼 크기
+  private maxBufferSize = 10; // 최대 버퍼 크기 (iOS Safari 극한 최적화)
 
   constructor() {
     if (typeof document !== 'undefined') {
       this.isPageVisible = !document.hidden;
       this.setupVisibilityListener();
+      this.setupMemoryCleanup();
     }
   }
 
@@ -134,11 +137,13 @@ class MessageBuffer {
 
     this.buffer.push(bufferedMessage);
     
-    // 버퍼 크기 제한
+    // 버퍼 크기 제한 (메모리 최적화)
     if (this.buffer.length > this.maxBufferSize) {
       const removedCount = this.buffer.length - this.maxBufferSize;
       this.buffer = this.buffer.slice(-this.maxBufferSize);
-      console.log(`🗑️ 버퍼 크기 제한으로 ${removedCount}개 메시지 제거`);
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`🗑️ 버퍼 크기 제한으로 ${removedCount}개 메시지 제거`);
+      }
     }
 
     console.log('📬 메시지 버퍼에 추가:', {
@@ -294,15 +299,60 @@ class MessageBuffer {
     });
   }
 
-  // 오래된 메시지 정리 (30분 이상된 메시지)
-  cleanupOldMessages(): number {
-    const thirtyMinutesAgo = Date.now() - (30 * 60 * 1000); // 30분으로 단축
+  // 메모리 정리 설정
+  private setupMemoryCleanup(): void {
+    // 일반 메모리 정리
+    window.addEventListener('memoryCleanup', () => {
+      console.log('🧹 MessageBuffer: Performing memory cleanup');
+      this.performCleanup(false);
+    });
+
+    // 응급 메모리 정리 (iOS Safari)
+    window.addEventListener('emergencyMemoryCleanup', () => {
+      console.warn('🆘 MessageBuffer: Performing EMERGENCY cleanup');
+      this.performCleanup(true);
+    });
+  }
+
+  // 통합 정리 메서드
+  private performCleanup(isEmergency: boolean): void {
     const beforeCount = this.buffer.length;
     
-    this.buffer = this.buffer.filter(msg => msg.receivedAt > thirtyMinutesAgo);
+    if (isEmergency) {
+      // 응급 상황: 최근 3개 메시지만 유지
+      this.buffer = this.buffer.slice(-3);
+      console.warn(`🆘 EMERGENCY: MessageBuffer reduced to ${this.buffer.length} messages`);
+      
+      // 응급 상황에서는 Service Worker에도 알림
+      this.notifyServiceWorker();
+    } else {
+      // 일반 정리: 오래된 메시지 제거 (3분 이상)
+      const threeMinutesAgo = Date.now() - (3 * 60 * 1000);
+      this.buffer = this.buffer.filter(msg => msg.receivedAt > threeMinutesAgo);
+      
+      // 읽은 메시지 우선 제거
+      if (this.buffer.length > this.maxBufferSize / 2) {
+        const unreadMessages = this.buffer.filter(msg => !msg.isRead);
+        const readMessages = this.buffer.filter(msg => msg.isRead);
+        this.buffer = [...unreadMessages.slice(-3), ...readMessages.slice(-2)];
+      }
+    }
     
     const removedCount = beforeCount - this.buffer.length;
     if (removedCount > 0) {
+      console.log(`🧹 MessageBuffer: Cleaned up ${removedCount} messages (${isEmergency ? 'EMERGENCY' : 'normal'})`);
+    }
+  }
+
+  // 오래된 메시지 정리 (모바일 메모리 최적화: 10분으로 단축)
+  cleanupOldMessages(): number {
+    const tenMinutesAgo = Date.now() - (10 * 60 * 1000); // 10분으로 단축 (모바일 메모리 절약)
+    const beforeCount = this.buffer.length;
+    
+    this.buffer = this.buffer.filter(msg => msg.receivedAt > tenMinutesAgo);
+    
+    const removedCount = beforeCount - this.buffer.length;
+    if (removedCount > 0 && process.env.NODE_ENV === 'development') {
       console.log('🧹 오래된 메시지 정리됨:', removedCount);
     }
     
@@ -345,10 +395,10 @@ if (typeof window !== 'undefined') {
   // 페이지 로드 시 마지막 활동 시간 초기화
   localStorage.setItem('lastUserActivity', Date.now().toString());
   
-  // 정기적으로 오래된 버퍼 메시지 정리 (2분마다)
+  // 정기적으로 오래된 버퍼 메시지 정리 (1분마다, 모바일 메모리 최적화)
   setInterval(() => {
     messageBuffer.cleanupOldMessages();
-  }, 2 * 60 * 1000);
+  }, 60 * 1000);
 }
 
 // 전역 접근을 위한 함수들

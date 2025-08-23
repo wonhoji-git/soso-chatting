@@ -18,11 +18,116 @@ class BackgroundDetection {
   private activityTimer: ReturnType<typeof setTimeout> | null = null;
   private lastUserActivity: number = Date.now();
   private checkInterval: ReturnType<typeof setInterval> | null = null;
+  private stabilityTimer: ReturnType<typeof setTimeout> | null = null;
+  private stateHistory: { state: string; timestamp: number }[] = [];
+  private lastStableState: 'active' | 'background' | null = null;
 
   constructor() {
     this.state = this.getInitialState();
     this.setupEventListeners();
     this.startPeriodicCheck();
+  }
+  
+  // 최적의 체크 간격 계산
+  private calculateOptimalInterval(): number {
+    const baseInterval = 10000; // 10초 기본값
+    
+    // 플랫폼별 조정
+    if (this.state.platform === 'mobile') {
+      if (this.state.isPWA) {
+        return 2000; // PWA 모바일: 2초 (가장 빈번)
+      } else {
+        return 4000; // 모바일 브라우저: 4초
+      }
+    }
+    
+    return baseInterval; // 데스크톱: 10초
+  }
+  
+  // 상태 히스토리 관리
+  private addStateHistory(entry: { state: string; timestamp: number }) {
+    this.stateHistory.push(entry);
+    
+    // 최근 10개 항목만 유지
+    if (this.stateHistory.length > 10) {
+      this.stateHistory = this.stateHistory.slice(-10);
+    }
+  }
+  
+  // 최근 상태 히스토리 조회
+  private getRecentStateHistory(): { state: string; timestamp: number }[] {
+    const fiveSecondsAgo = Date.now() - 5000;
+    return this.stateHistory.filter(entry => entry.timestamp > fiveSecondsAgo);
+  }
+  
+  // 강화된 백그라운드 상태 결정
+  private determineBackgroundStateEnhanced(isVisible: boolean, hasFocus: boolean, timeSinceActivity: number): boolean {
+    const visibilityBased = !isVisible;
+    const focusBased = !hasFocus;
+    const activityBased = timeSinceActivity > 20000; // 20초로 조정
+    
+    // 상태 히스토리 기반 안정성 확인
+    const recentHistory = this.getRecentStateHistory();
+    const stableHidden = recentHistory.filter(h => h.state.includes('hidden')).length >= 2;
+    const stableUnfocused = recentHistory.filter(h => h.state.includes('unfocused')).length >= 2;
+    
+    // 플랫폼별 정교한 판단
+    if (this.state.platform === 'mobile') {
+      if (this.state.isPWA) {
+        // PWA: visibility와 안정성 모두 고려
+        return visibilityBased && stableHidden;
+      } else {
+        // 모바일 브라우저: visibility 우선, 히스토리로 검증
+        return visibilityBased && (stableHidden || focusBased);
+      }
+    } else {
+      // 데스크톱: 모든 조건 종합 고려
+      return visibilityBased && focusBased && (stableHidden || stableUnfocused || activityBased);
+    }
+  }
+  
+  // 안정성을 위한 지연된 상태 업데이트
+  private scheduleStateUpdate(newState: Partial<BackgroundState>, isImportantChange: boolean) {
+    // 기존 타이머가 있다면 취소
+    if (this.stabilityTimer) {
+      clearTimeout(this.stabilityTimer);
+    }
+    
+    // 중요한 변경사항은 더 긴 지연시간 적용
+    const delay = isImportantChange ? 1000 : 500;
+    
+    this.stabilityTimer = setTimeout(() => {
+      // 지연시간 후 다시 한번 확인하여 상태가 안정적인지 체크
+      if (this.verifyStateStability(newState)) {
+        const wasBackground = this.state.isBackground;
+        this.setState(newState);
+        
+        // 중요한 변경사항인 경우 Service Worker에 알림
+        if (isImportantChange && wasBackground !== newState.isBackground) {
+          this.notifyServiceWorker({
+            isBackground: newState.isBackground || false,
+            platform: this.state.platform,
+            isPWA: this.state.isPWA,
+            appState: newState.appState || 'active',
+            trigger: 'enhanced-stability-check'
+          });
+        }
+      }
+      
+      this.stabilityTimer = null;
+    }, delay);
+  }
+  
+  // 상태 안정성 검증
+  private verifyStateStability(proposedState: Partial<BackgroundState>): boolean {
+    if (typeof document === 'undefined') return false;
+    
+    // 현재 실제 상태와 제안된 상태가 여전히 일치하는지 확인
+    const currentVisibility = !document.hidden;
+    const currentFocus = document.hasFocus();
+    
+    return proposedState.isVisible === currentVisibility && 
+           proposedState.hasFocus === currentFocus;
   }
 
   private getInitialState(): BackgroundState {
@@ -186,12 +291,8 @@ class BackgroundDetection {
   }
 
   private startPeriodicCheck() {
-    // 주기적으로 상태 확인 (모바일에서는 더 자주, PWA에서는 더욱 자주)
-    let interval = 10000; // 기본 10초
-    
-    if (this.state.platform === 'mobile') {
-      interval = this.state.isPWA ? 3000 : 5000; // PWA: 3초, 모바일 브라우저: 5초
-    }
+    // 적응형 주기 설정 (상황에 따른 동적 조정)
+    let interval = this.calculateOptimalInterval();
     
     console.log(`⏰ Starting periodic background check every ${interval/1000}s for ${this.state.platform}${this.state.isPWA ? ' PWA' : ''}`);
     
@@ -208,15 +309,21 @@ class BackgroundDetection {
     const actualVisibility = !document.hidden;
     const actualFocus = document.hasFocus();
     const actualVisibilityState = document.visibilityState;
+    
+    // 상태 역사 기록 추가
+    this.addStateHistory({
+      state: `${actualVisibility ? 'visible' : 'hidden'}_${actualFocus ? 'focused' : 'unfocused'}`,
+      timestamp: now
+    });
 
-    // 상태 불일치 감지 및 수정 (더 상세한 로그)
+    // 상태 불일치 감지 및 수정 (강화된 검증)
     const hasInconsistency = 
       this.state.isVisible !== actualVisibility || 
       this.state.hasFocus !== actualFocus ||
       this.state.visibilityState !== actualVisibilityState;
 
     if (hasInconsistency) {
-      console.log('🔧 State inconsistency detected, correcting:', {
+      console.log('🔧 Enhanced state inconsistency detected:', {
         stored: { 
           visible: this.state.isVisible, 
           focus: this.state.hasFocus,
@@ -230,31 +337,22 @@ class BackgroundDetection {
         },
         timeSinceActivity: Math.round(timeSinceActivity / 1000),
         platform: this.state.platform,
-        isPWA: this.state.isPWA
+        isPWA: this.state.isPWA,
+        stateHistory: this.getRecentStateHistory()
       });
 
       const wasBackground = this.state.isBackground;
-      const isNowBackground = this.determineBackgroundState(actualVisibility, actualFocus, timeSinceActivity);
+      const isNowBackground = this.determineBackgroundStateEnhanced(actualVisibility, actualFocus, timeSinceActivity);
       
-      this.setState({
+      // 상태 변경을 지연하여 안정성 확보
+      this.scheduleStateUpdate({
         isVisible: actualVisibility,
         hasFocus: actualFocus,
         visibilityState: actualVisibilityState,
         isBackground: isNowBackground,
         appState: isNowBackground ? 'background' : 'active',
         lastActivityTime: this.lastUserActivity
-      });
-
-      // Service Worker에 상태 변경 알림 (상태가 변경된 경우만)
-      if (wasBackground !== isNowBackground) {
-        this.notifyServiceWorker({
-          isBackground: isNowBackground,
-          platform: this.state.platform,
-          isPWA: this.state.isPWA,
-          appState: isNowBackground ? 'background' : 'active',
-          trigger: 'health-check-inconsistency'
-        });
-      }
+      }, wasBackground !== isNowBackground);
     }
 
     // 모바일에서 더 엄격한 백그라운드 감지
@@ -324,22 +422,31 @@ class BackgroundDetection {
     }
   }
 
-  // 모바일 백그라운드 상태 감지 (추가적인 체크)
+  // 강화된 모바일 백그라운드 상태 감지
   private detectMobileBackgroundState(): boolean {
     if (this.state.platform !== 'mobile') return false;
     
     // 여러 조건을 종합적으로 판단
     const isDocumentHidden = document.hidden;
     const hasNoFocus = !document.hasFocus();
-    const lowActivity = Date.now() - this.lastUserActivity > 10000; // 10초
+    const timeSinceActivity = Date.now() - this.lastUserActivity;
+    const lowActivity = timeSinceActivity > 15000; // 15초로 엄격화
     
-    // PWA 환경에서는 더 엄격하게 판단
+    // 상태 역사 기반 판단
+    const recentStateHistory = this.getRecentStateHistory();
+    const hasConsistentHiddenState = recentStateHistory.filter(h => 
+      h.state.includes('hidden')
+    ).length >= 2;
+    
+    // PWA 환경에서는 더 정교한 판단
     if (this.state.isPWA) {
-      return isDocumentHidden || (hasNoFocus && lowActivity);
+      // PWA에서는 복합 조건 및 역사 정보 활용
+      return (isDocumentHidden && hasConsistentHiddenState) || 
+             (hasNoFocus && lowActivity && hasConsistentHiddenState);
     }
     
-    // 일반 모바일 브라우저에서는 document.hidden을 주로 참고
-    return isDocumentHidden;
+    // 일반 모바일 브라우저: document.hidden을 기본으로 하되 역사 정보 활용
+    return isDocumentHidden && (hasConsistentHiddenState || timeSinceActivity > 5000);
   }
 
   // Service Worker에 상태 변경 알림 (강화된 에러 처리)

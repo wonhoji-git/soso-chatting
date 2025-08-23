@@ -77,11 +77,107 @@ export const usePusher = () => {
   const visibilityListenerCleanupRef = useRef<(() => void) | null>(null);
   const backgroundStateListenerCleanupRef = useRef<(() => void) | null>(null);
   const recentNotificationIds = useRef<Set<string>>(new Set()); // 중복 알림 방지
-  const maxRetries = process.env.NODE_ENV === 'production' ? 8 : 5;
-  const retryDelay = process.env.NODE_ENV === 'production' ? 3000 : 2000;
-  const heartbeatInterval = 30000; // 30초로 단축 (더 자주 체크)
-  const syncInterval = 60000; // 1분으로 단축
-  const connectionCheckInterval = process.env.NODE_ENV === 'production' ? 15000 : 5000; // 프로덕션에서는 15초
+  const reconnectRef = useRef<() => void>();
+  const maxRetries = process.env.NODE_ENV === 'production' ? 12 : 8; // 더 많은 재시도 허용
+  const retryDelay = process.env.NODE_ENV === 'production' ? 2000 : 1500; // 더 빠른 재연결
+  // 강화된 모바일 백그라운드 대응
+  const isMobileDevice = typeof navigator !== 'undefined' && /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  const isPWA = typeof window !== 'undefined' && (window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true);
+  
+  // 적응형 하트비트 간격
+  const heartbeatInterval = (() => {
+    if (isMobileDevice && isPWA) return 15000; // PWA 모바일: 15초 (가장 빈번)
+    if (isMobileDevice) return 20000; // 모바일: 20초
+    return 30000; // 데스크톱: 30초
+  })();
+  
+  const syncInterval = (() => {
+    if (isMobileDevice && isPWA) return 30000; // PWA 모바일: 30초
+    if (isMobileDevice) return 45000; // 모바일: 45초
+    return 60000; // 데스크톱: 1분
+  })();
+  
+  const connectionCheckInterval = (() => {
+    const baseInterval = process.env.NODE_ENV === 'production' ? 8000 : 3000;
+    if (isMobileDevice && isPWA) return baseInterval; // PWA는 가장 빈번
+    if (isMobileDevice) return baseInterval * 1.5; // 모바일은 1.5배
+    return baseInterval * 2; // 데스크톱은 2배
+  })();
+
+  // 네트워크 변경 감지 및 즉시 재연결
+  const setupNetworkMonitoring = useCallback(() => {
+    if (typeof window === 'undefined') return;
+
+    // 온라인/오프라인 이벤트 리스너
+    const handleOnline = () => {
+      console.log('🌐 Network came back online, checking connection...');
+      setTimeout(() => {
+        if (!isConnected) {
+          console.log('🔄 Network back online but not connected, reconnecting...');
+          if (reconnectRef.current) {
+            reconnectRef.current();
+          }
+        }
+      }, 1000); // 네트워크가 완전히 복구될 때까지 1초 대기
+    };
+
+    const handleOffline = () => {
+      console.log('📡 Network went offline');
+      setConnectionStatus('disconnected');
+      setIsConnected(false);
+    };
+
+    // Visibility API와 함께 네트워크 상태 변경 감지
+    const handleVisibilityChange = () => {
+      if (!document.hidden && navigator.onLine && !isConnected) {
+        console.log('📱 App became visible and network is online, checking connection...');
+        setTimeout(() => {
+          if (!isConnected) {
+            console.log('🔄 Reconnecting after visibility change...');
+            if (reconnectRef.current) {
+              reconnectRef.current();
+            }
+          }
+        }, 500);
+      }
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // 모바일에서 추가적인 네트워크 상태 감지
+    if (isMobileDevice) {
+      // 포커스 이벤트도 활용
+      const handleFocus = () => {
+        if (navigator.onLine && !isConnected) {
+          console.log('📱 Mobile app focused and online, checking connection...');
+          setTimeout(() => {
+            if (!isConnected) {
+              if (reconnectRef.current) {
+                reconnectRef.current();
+              }
+            }
+          }, 300);
+        }
+      };
+
+      window.addEventListener('focus', handleFocus);
+      
+      return () => {
+        window.removeEventListener('online', handleOnline);
+        window.removeEventListener('offline', handleOffline);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        window.removeEventListener('focus', handleFocus);
+      };
+    }
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [isConnected, isMobileDevice]); // dependency 최소화
 
   // Service Worker 통신 설정
   const setupServiceWorkerCommunication = useCallback(() => {
@@ -183,16 +279,34 @@ export const usePusher = () => {
             }
             
           } else if (type === 'CONNECTION_UNHEALTHY') {
-            console.log('⚠️ Service Worker detected connection issues:', message);
+            const details = event.data.details || {};
+            console.log('⚠️ Service Worker detected connection issues:', {
+              message,
+              details,
+              isLongTerm: details.isLongTermBackground,
+              backgroundDuration: details.backgroundDuration ? Math.round(details.backgroundDuration / 1000) + 's' : 'N/A'
+            });
             
             // 연결 문제 UI 표시
             setConnectionStatus('reconnecting');
             
-            // 2초 후 재연결 시도
+            // 백그라운드 상태에 따른 지연 시간 조정
+            const delay = details.isLongTermBackground ? 5000 : 2000;
             setTimeout(() => {
-              console.log('🔄 Attempting reconnection due to SW warning...');
-              reconnect();
-            }, 2000);
+              console.log('🔄 Attempting enhanced reconnection due to SW warning...');
+              handleEnhancedReconnection(details);
+            }, delay);
+            
+          } else if (type === 'LONG_TERM_BACKGROUND_DETECTED') {
+            const bgData = event.data.data || {};
+            console.log('🕐 Long-term background state detected:', {
+              duration: Math.round(bgData.duration / 60000) + 'min',
+              bufferedMessages: bgData.bufferedMessages,
+              timeSinceHeartbeat: Math.round((Date.now() - bgData.lastHeartbeat) / 1000) + 's'
+            });
+            
+            // 장기 백그라운드 대응 처리
+            handleLongTermBackgroundRecovery(bgData);
             
           } else {
             console.log('📨 Unknown Service Worker message type:', type);
@@ -377,7 +491,8 @@ export const usePusher = () => {
       // 연결된 상태에서 주기적 작업이 중지되어 있다면 시작
       if (!heartbeatIntervalRef.current || !syncIntervalRef.current) {
         startPeriodicTasks();
-        setTimeout(syncWithServer, 1000);
+        // 연결 후 안정성 향상을 위한 지연 동기화
+        setTimeout(syncWithServer, 2000); // 2초 지연
       }
     } else if (actualState === 'connecting' && connectionStatus !== 'connecting') {
       console.log('⚡ Fixing connection status: actualState=connecting');
@@ -553,7 +668,7 @@ export const usePusher = () => {
         
         // 연결되면 주기적 작업 시작 및 서버와 동기화
         startPeriodicTasks();
-        setTimeout(syncWithServer, 1000); // 1초 후 서버와 동기화
+        setTimeout(syncWithServer, 2000); // 강화된 안정성을 위한 2초 지연
       });
 
       pusher.connection.bind('disconnected', () => {
@@ -631,7 +746,9 @@ export const usePusher = () => {
 
       // 메시지 수신
       channel.bind('new-message', (message: Message) => {
-        console.log('📨 Raw message received:', message);
+        if (process.env.NODE_ENV === 'development') {
+          console.log('📨 Raw message received:', message);
+        }
         logConnectionState('message_received', `new message from ${message.userName}`);
         
         // 시스템 메시지인지 확인하여 필터링 (에러 필터링 완화)
@@ -805,15 +922,17 @@ export const usePusher = () => {
                 return aTime - bTime;
               });
               
-              // 최근 100개 메시지만 유지
-              const limitedMessages = sortedMessages.length > 100 ? sortedMessages.slice(-100) : sortedMessages;
+              // iOS Safari용 극한 최적화: 30개 메시지만 유지
+              const limitedMessages = sortedMessages.length > 30 ? sortedMessages.slice(-30) : sortedMessages;
               
-              console.log('📝 Updated messages array:', {
-                totalLength: limitedMessages.length,
-                newMessageId: message.id,
-                newMessageTime: (message as any).serverTimestamp || message.timestamp,
-                isFirstMessage: prev.length === 0
-              });
+              if (process.env.NODE_ENV === 'development') {
+                console.log('📝 Updated messages array:', {
+                  totalLength: limitedMessages.length,
+                  newMessageId: message.id,
+                  newMessageTime: (message as any).serverTimestamp || message.timestamp,
+                  isFirstMessage: prev.length === 0
+                });
+              }
               
               return limitedMessages;
             }
@@ -1054,6 +1173,9 @@ export const usePusher = () => {
     // Service Worker 통신 설정
     setupServiceWorkerCommunication();
     
+    // 네트워크 모니터링 설정
+    const networkCleanup = setupNetworkMonitoring();
+    
     // 페이지 가시성 변경 리스너 설정
     visibilityListenerCleanupRef.current = onPageVisibilityChange(() => {
       console.log('📺 Page visibility changed, syncing with server...');
@@ -1136,6 +1258,11 @@ export const usePusher = () => {
         initializationIdRef.current = null;
       }
       
+      // 네트워크 모니터링 정리
+      if (networkCleanup) {
+        networkCleanup();
+      }
+      
       // 가시성 리스너 정리
       if (visibilityListenerCleanupRef.current) {
         visibilityListenerCleanupRef.current();
@@ -1166,7 +1293,7 @@ export const usePusher = () => {
     };
   }, [initializePusher, cleanupPusher, logConnectionState, setupServiceWorkerCommunication, syncWithServer, isConnected]);
 
-  // 수동 재연결 함수
+  // 강화된 수동 재연결 함수
   const reconnect = useCallback(() => {
     if (isDisconnectingRef.current) {
       logConnectionState('manual_reconnect', 'skipped - already disconnecting');
@@ -1178,8 +1305,128 @@ export const usePusher = () => {
     setLastError(null);
     connectionAttemptsRef.current = 0;
     isInitializedRef.current = false;
+    
+    // 강화된 재연결 전 준비 작업
+    prepareForReconnection();
     initializePusher();
   }, [initializePusher, logConnectionState]);
+  
+  // 강화된 재연결 처리
+  const handleEnhancedReconnection = useCallback(async (details: any = {}) => {
+    console.log('🔄 Starting enhanced reconnection process...', details);
+    
+    // 1. 현재 상태 저장
+    const currentState = {
+      user: currentUserRef.current,
+      messageCount: messages.length,
+      onlineUserCount: onlineUsers.length
+    };
+    
+    // 2. 연결 정리
+    stopPeriodicTasks();
+    
+    // 3. 장기 백그라운드인 경우 추가 대기
+    if (details.isLongTermBackground) {
+      console.log('🕐 Long-term background detected, waiting for stability...');
+      await new Promise(resolve => setTimeout(resolve, 3000));
+    }
+    
+    // 4. 재연결 실행
+    setRetryCount(0);
+    setLastError(null);
+    connectionAttemptsRef.current = 0;
+    isInitializedRef.current = false;
+    
+    prepareForReconnection();
+    initializePusher();
+    
+    // 5. 연결 성공 후 상태 복구 스케줄링
+    setTimeout(() => {
+      if (isConnected && currentUserRef.current) {
+        console.log('🔄 Restoring state after enhanced reconnection...');
+        restoreStateAfterReconnection(currentState);
+      }
+    }, 2000);
+  }, [messages.length, onlineUsers.length, isConnected, initializePusher, stopPeriodicTasks]);
+  
+  // 장기 백그라운드 복구 처리
+  const handleLongTermBackgroundRecovery = useCallback(async (bgData: any) => {
+    console.log('🌅 Handling long-term background recovery...');
+    
+    // 1. 연결 상태 강제 확인
+    if (!isConnected) {
+      console.log('🔄 Not connected, initiating recovery reconnection...');
+      handleEnhancedReconnection({ isLongTermBackground: true, ...bgData });
+      return;
+    }
+    
+    // 2. 연결되어 있다면 상태 동기화
+    console.log('🔄 Connected, performing state synchronization...');
+    await syncWithServer();
+    
+    // 3. 하트비트 즉시 전송
+    if (currentUserRef.current) {
+      await sendHeartbeat();
+    }
+    
+    // 4. 버퍼된 메시지 요청
+    if (serviceWorkerRef.current) {
+      serviceWorkerRef.current.postMessage({
+        type: 'GET_BUFFERED_MESSAGES'
+      });
+    }
+  }, [isConnected, syncWithServer, sendHeartbeat]);
+  
+  // 재연결 준비 작업
+  const prepareForReconnection = useCallback(() => {
+    console.log('🔧 Preparing for enhanced reconnection...');
+    
+    // 1. 기존 타이머 정리
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+    
+    // 2. 타이핑 상태 정리
+    if (isTypingRef.current && currentUserRef.current) {
+      isTypingRef.current = false;
+    }
+    
+    // 3. 메모리 상태 최적화
+    if (messages.length > 50) {
+      console.log('🧹 Optimizing memory before reconnection...');
+      setMessages(prev => prev.slice(-30)); // 최근 30개 메시지만 유지
+    }
+  }, [messages.length]);
+  
+  // 재연결 후 상태 복구
+  const restoreStateAfterReconnection = useCallback(async (previousState: any) => {
+    console.log('💾 Restoring state after reconnection...', previousState);
+    
+    try {
+      // 1. 사용자 상태 복구
+      if (previousState.user && currentUserRef.current?.id === previousState.user.id) {
+        console.log('👤 User state preserved');
+      }
+      
+      // 2. 온라인 사용자 동기화
+      await syncWithServer();
+      
+      // 3. 메시지 누락 확인
+      if (serviceWorkerRef.current) {
+        serviceWorkerRef.current.postMessage({
+          type: 'GET_BUFFERED_MESSAGES'
+        });
+      }
+      
+      console.log('✅ State restoration completed successfully');
+    } catch (error) {
+      console.error('❌ State restoration failed:', error);
+    }
+  }, [syncWithServer]);
+
+  // reconnectRef에 함수 할당
+  reconnectRef.current = reconnect;
 
   const sendMessage = async (message: string, user: User) => {
     // 안전한 메시지 ID 생성 (모바일 환경 고려)
@@ -1241,7 +1488,7 @@ export const usePusher = () => {
         throw new Error('Channel not subscribed');
       }
 
-      // 연결 준비성 추가 확인 (첫 번째 메시지 문제 해결)
+      // 강화된 연결 준비성 확인 (첫 번째 메시지 문제 해결)
       const connectionState = pusherRef.current?.connection.state;
       if (connectionState !== 'connected') {
         console.log('❌ Pusher connection not in connected state:', connectionState);
@@ -1249,11 +1496,24 @@ export const usePusher = () => {
         throw new Error(`Pusher connection not ready: ${connectionState}`);
       }
 
-      // 최근 연결된 경우 추가 대기 (첫 번째 메시지 안정성 향상)
-      const timeSinceConnection = Date.now() - (connectionAttemptsRef.current === 0 ? 0 : 1000);
-      if (timeSinceConnection < 500) {
-        console.log('⏰ Recently connected, waiting for stability...');
-        await new Promise(resolve => setTimeout(resolve, 500 - timeSinceConnection));
+      // 더 안전한 연결 안정성 대기 (모바일 백그라운드 복귀 대응)
+      const stabilityDelay = (() => {
+        if (isMobileDevice && isPWA) return 1000; // PWA 모바일: 1초
+        if (isMobileDevice) return 800; // 모바일: 0.8초
+        return 500; // 데스크톱: 0.5초
+      })();
+      
+      const timeSinceConnection = Date.now() - (connectionAttemptsRef.current === 0 ? 0 : 2000);
+      if (timeSinceConnection < stabilityDelay) {
+        const waitTime = stabilityDelay - timeSinceConnection;
+        console.log(`⏰ Recently connected, waiting ${waitTime}ms for stability...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+      
+      // 추가 연결 상태 재확인 (안전성 강화)
+      if (pusherRef.current?.connection.state !== 'connected') {
+        console.log('❌ Connection state changed during stability wait, aborting...');
+        throw new Error('Connection became unstable during message preparation');
       }
 
       console.log('✅ Pusher is connected and channel is ready, sending message to server');
@@ -1811,13 +2071,41 @@ export const usePusher = () => {
     const handleRetry = (event: Event) => {
       handleMessageRetry(event as CustomEvent);
     };
+    
+    // 메모리 정리 이벤트 리스너 등록
+    const handleMemoryCleanup = (event: CustomEvent) => {
+      const isEmergency = event.detail?.level === 'emergency';
+      console.log(`🧹 usePusher: Performing ${isEmergency ? 'EMERGENCY' : 'normal'} memory cleanup`);
+      
+      if (isEmergency) {
+        // 응급 상황: 메시지 목록을 10개로 제한
+        setMessages(prev => prev.slice(-10));
+        // 온라인 사용자 목록 최소화 (현재 사용자 + 최근 3명)
+        setOnlineUsers(prev => {
+          const currentUser = currentUserRef.current;
+          const others = prev.filter(u => u.id !== currentUser?.id).slice(-3);
+          return currentUser ? [currentUser, ...others] : others;
+        });
+        // 타이핑 사용자 초기화
+        setTypingUsers([]);
+        console.warn('🆘 usePusher: EMERGENCY cleanup completed');
+      } else {
+        // 일반 정리: 메시지 30개로 제한
+        setMessages(prev => prev.slice(-30));
+      }
+    };
+    
     window.addEventListener('messageRetry', handleRetry);
+    window.addEventListener('memoryCleanup', handleMemoryCleanup as EventListener);
+    window.addEventListener('emergencyMemoryCleanup', handleMemoryCleanup as EventListener);
     
     return () => {
       if (typingCleanupIntervalRef.current) {
         clearInterval(typingCleanupIntervalRef.current);
       }
       window.removeEventListener('messageRetry', handleRetry);
+      window.removeEventListener('memoryCleanup', handleMemoryCleanup as EventListener);
+      window.removeEventListener('emergencyMemoryCleanup', handleMemoryCleanup as EventListener);
     };
   }, [cleanupTypingUsers, handleMessageRetry]);
 
