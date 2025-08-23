@@ -21,6 +21,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
   const [showSidebar, setShowSidebar] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [calmMode, setCalmMode] = useState(false); // Animation control for focused learning
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const hasJoinedRef = useRef(false);
   const isUnmountingRef = useRef(false);
@@ -409,8 +410,8 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
         // 모바일 환경 감지
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
         
-        // 사용자에게 에러 알림 표시
-        let errorMessage = '메시지 전송에 실패했습니다.';
+        // 어린이 친화적 에러 메시지 표시
+        let errorMessage = '😅 메시지가 전달되지 않았어요! 다시 해볼까요?';
         let isRetryable = true;
         
         if (error instanceof Error) {
@@ -418,23 +419,23 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
           
           if (errorMsg.includes('모바일 네트워크') || errorMsg.includes('timeout')) {
             errorMessage = isMobile 
-              ? '📱 모바일 네트워크가 불안정합니다. WiFi 연결을 확인해주세요.' 
-              : '🌐 네트워크 연결이 불안정합니다. 다시 시도해주세요.';
+              ? '📱 인터넷이 느려요! WiFi를 확인해주세요 🌐' 
+              : '🌐 인터넷이 느려요! 다시 해볼까요? ✨';
             isRetryable = true;
           } else if (errorMsg.includes('not connected') || errorMsg.includes('연결이 끊어졌')) {
-            errorMessage = '🔌 연결이 끊어졌습니다. 인터넷 연결을 확인해주세요.';
+            errorMessage = '🔄 잠깐만 기다려주세요! 다시 연결하고 있어요 ⏱️';
             isRetryable = true;
           } else if (errorMsg.includes('too long') || errorMsg.includes('maximum')) {
-            errorMessage = '📝 메시지가 너무 깁니다. (최대 1000자)';
+            errorMessage = '📏 메시지가 너무 길어요! 짧게 써주세요 ✂️';
             isRetryable = false;
           } else if (errorMsg.includes('invalid')) {
-            errorMessage = '⚠️ 잘못된 데이터입니다. 페이지를 새로고침해주세요.';
+            errorMessage = '🤔 뭔가 이상해요! 새로고침을 해주세요 🔄';
             isRetryable = false;
           } else if (errorMsg.includes('server error') || errorMsg.includes('서버 오류')) {
-            errorMessage = '🔧 서버에 일시적인 문제가 발생했습니다. 잠시 후 다시 시도해주세요.';
+            errorMessage = '🛠️ 컴퓨터가 잠깐 쉬고 있어요! 조금만 기다려주세요 ⏰';
             isRetryable = true;
           } else if (errorMsg.includes('500') || errorMsg.includes('503')) {
-            errorMessage = '🚫 서버가 일시적으로 사용할 수 없습니다. 잠시 후 다시 시도해주세요.';
+            errorMessage = '😴 서버가 잠깐 자고 있어요! 조금 후에 다시 해보세요 💤';
             isRetryable = true;
           }
         }
@@ -649,21 +650,21 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
       />
       
       <div 
-        className="flex mobile-chat-container lg:max-w-7xl lg:mx-auto lg:my-4 lg:rounded-3xl lg:shadow-2xl bg-gradient-to-br from-pink-200 via-purple-200 to-indigo-300 relative overflow-hidden lg:h-[calc(100vh-2rem)]"
+        className={`flex mobile-chat-container lg:max-w-7xl lg:mx-auto lg:my-4 lg:rounded-3xl lg:shadow-2xl bg-gradient-to-br from-pink-200 via-purple-200 to-indigo-300 relative overflow-hidden lg:h-[calc(100vh-2rem)] ${calmMode ? 'calm-mode' : ''}`}
         style={{
           // Fix for iPhone viewport issues
           minHeight: '-webkit-fill-available',
           height: '-webkit-fill-available'
         }}
       >
-      {/* 떠다니는 배경 요소들 - 반응형 크기 */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-10 left-10 text-2xl md:text-4xl lg:text-5xl animate-bounce">🌟</div>
-        <div className="absolute top-20 right-20 text-xl md:text-3xl lg:text-4xl animate-pulse">🎈</div>
-        <div className="absolute bottom-32 left-16 text-lg md:text-2xl lg:text-3xl animate-bounce delay-300">🦄</div>
-        <div className="absolute bottom-20 right-32 text-xl md:text-3xl lg:text-4xl animate-pulse delay-500">🌈</div>
-        <div className="absolute top-1/2 left-1/4 text-lg md:text-2xl lg:text-3xl animate-spin" style={{animationDuration: '3s'}}>⭐</div>
-        <div className="absolute top-1/3 right-1/3 text-lg md:text-2xl lg:text-3xl animate-bounce delay-700">✨</div>
+      {/* 떠다니는 배경 요소들 - 반응형 크기 (집중모드에서는 축소) */}
+      <div className={`absolute inset-0 overflow-hidden pointer-events-none transition-opacity duration-500 ${calmMode ? 'opacity-20' : 'opacity-100'}`}>
+        <div className={`absolute top-10 left-10 text-2xl md:text-4xl lg:text-5xl ${calmMode ? '' : 'animate-bounce'}`}>🌟</div>
+        <div className={`absolute top-20 right-20 text-xl md:text-3xl lg:text-4xl ${calmMode ? '' : 'animate-pulse'}`}>🎈</div>
+        <div className={`absolute bottom-32 left-16 text-lg md:text-2xl lg:text-3xl ${calmMode ? '' : 'animate-bounce delay-300'}`}>🦄</div>
+        <div className={`absolute bottom-20 right-32 text-xl md:text-3xl lg:text-4xl ${calmMode ? '' : 'animate-pulse delay-500'}`}>🌈</div>
+        <div className={`absolute top-1/2 left-1/4 text-lg md:text-2xl lg:text-3xl ${calmMode ? '' : 'animate-spin'}`} style={{animationDuration: calmMode ? '0s' : '3s'}}>⭐</div>
+        <div className={`absolute top-1/3 right-1/3 text-lg md:text-2xl lg:text-3xl ${calmMode ? '' : 'animate-bounce delay-700'}`}>✨</div>
       </div>
 
       {/* 재연결 알림 */}
@@ -940,6 +941,19 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
             </div>
 
             <div className="flex items-center space-x-2" style={{zIndex: 1000000}}>
+              {/* Calm Mode Toggle for focused learning */}
+              <button
+                onClick={() => setCalmMode(!calmMode)}
+                className={`mobile-touch-target p-2 md:p-3 rounded-xl font-bold text-xs md:text-sm transition-all transform hover:scale-105 active:scale-95 ${
+                  calmMode 
+                    ? 'bg-blue-500 text-white shadow-lg' 
+                    : 'bg-white/70 text-purple-600 hover:bg-white/90'
+                }`}
+                title={calmMode ? '집중모드 끄기' : '집중모드 켜기'}
+              >
+                {calmMode ? '😌 집중중' : '🎪 애니메이션'}
+              </button>
+              
               {/* 알림 설정 */}
               <NotificationSettings
                 settings={notificationSettings}
@@ -1098,6 +1112,40 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
             paddingRight: 'max(0.75rem, env(safe-area-inset-right))'
           }}
         >
+          {/* Character counter with fun visual */}
+          {newMessage.trim().length > 0 && (
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-xs text-purple-600 font-medium">
+                {newMessage.length >= 80 && newMessage.length < 95 && (
+                  <span className="text-orange-600">⚠️ 거의 다 찼어요! ({100 - newMessage.length}글자 남음)</span>
+                )}
+                {newMessage.length >= 95 && (
+                  <span className="text-red-600 animate-pulse">🚨 거의 끝이에요! ({100 - newMessage.length}글자 남음)</span>
+                )}
+                {newMessage.length < 80 && (
+                  <span className="text-green-600">✨ 좋아요! ({newMessage.length}/100글자)</span>
+                )}
+              </div>
+              <div className="flex items-center">
+                {/* Fun progress bar with emojis */}
+                <div className="w-20 bg-gray-200 rounded-full h-2 overflow-hidden">
+                  <div 
+                    className={`h-2 rounded-full transition-all duration-300 ${
+                      newMessage.length < 50 ? 'bg-green-400' :
+                      newMessage.length < 80 ? 'bg-yellow-400' :
+                      newMessage.length < 95 ? 'bg-orange-400' : 'bg-red-400'
+                    }`}
+                    style={{ width: `${(newMessage.length / 100) * 100}%` }}
+                  />
+                </div>
+                <span className="ml-2 text-xs">
+                  {newMessage.length < 50 ? '🌱' : 
+                   newMessage.length < 80 ? '🌿' : 
+                   newMessage.length < 95 ? '🌳' : '🔥'}
+                </span>
+              </div>
+            </div>
+          )}
           <form onSubmit={handleSendMessage} className="flex space-x-2 md:space-x-3 lg:space-x-4">
             <button
               type="button"
@@ -1159,7 +1207,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
               placeholder={isConnected ? "재미있는 메시지를 써보세요! 🎉" : "연결을 기다리는 중... 🔄"}
               className="flex-1 px-3 md:px-4 lg:px-6 py-3 md:py-4 lg:py-5 rounded-2xl border-3 border-pink-300 focus:border-purple-400 focus:outline-none font-medium disabled:opacity-50 text-base lg:text-lg bg-white/80 placeholder-purple-400 mobile-input-area"
               style={{ fontSize: '16px' }} // Prevents zoom on iOS
-              maxLength={200}
+              maxLength={100}
               disabled={!isConnected || isSending}
               autoComplete="off"
               enterKeyHint="send"

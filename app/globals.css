@@ -284,10 +284,13 @@
     }
   }
 
-  /* Touch targets should be at least 44px for accessibility */
+  /* Touch targets should be at least 48px for elementary school children */
   .mobile-touch-target {
-    min-height: 44px;
-    min-width: 44px;
+    min-height: 48px;
+    min-width: 48px;
+    /* Add gentle haptic feedback styling */
+    -webkit-tap-highlight-color: rgba(255, 192, 203, 0.3);
+    tap-highlight-color: rgba(255, 192, 203, 0.3);
   }
   
   /* Desktop hover enhancements */
@@ -309,6 +312,73 @@
     .mobile-chat-container {
       height: -webkit-fill-available;
     }
+  }
+
+  /* Calm mode - reduced animations for focused learning */
+  .calm-mode .animate-bounce,
+  .calm-mode .animate-pulse,
+  .calm-mode .animate-spin,
+  .calm-mode .animate-bounce-gentle {
+    animation: none !important;
+  }
+
+  .calm-mode {
+    --animation-duration: 0s;
+  }
+
+  /* Child-friendly visual feedback */
+  .success-feedback {
+    background: linear-gradient(135deg, #10b981, #34d399);
+    animation: gentlePulse 1s ease-in-out;
+  }
+
+  @keyframes gentlePulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.02); }
+  }
+
+  /* Child-friendly loading animations */
+  .child-loading {
+    animation: childBounce 1.5s ease-in-out infinite;
+  }
+
+  @keyframes childBounce {
+    0%, 100% { 
+      transform: translateY(0) rotate(0deg);
+    }
+    25% { 
+      transform: translateY(-10px) rotate(-5deg);
+    }
+    50% { 
+      transform: translateY(-20px) rotate(0deg);
+    }
+    75% { 
+      transform: translateY(-10px) rotate(5deg);
+    }
+  }
+
+  /* Encouraging button animations */
+  .encourage-button {
+    animation: encourageGlow 2s ease-in-out infinite;
+  }
+
+  @keyframes encourageGlow {
+    0%, 100% {
+      box-shadow: 0 0 20px rgba(255, 215, 0, 0.3);
+    }
+    50% {
+      box-shadow: 0 0 30px rgba(255, 215, 0, 0.6);
+    }
+  }
+
+  /* Fun progress animations */
+  .progress-grow {
+    animation: progressGrow 0.5s ease-out;
+  }
+
+  @keyframes progressGrow {
+    0% { width: 0%; }
+    100% { width: var(--progress-width); }
   }
 
   /* Reduce motion for users who prefer it */

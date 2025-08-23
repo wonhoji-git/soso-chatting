@@ -9,10 +9,9 @@ const urlsToCache = [
   '/images/coco.jpg'
 ];
 
-// 백그라운드 메시지 버퍼 (모바일 메모리 최적화)
+// 백그라운드 메시지 버퍼
 let backgroundMessageBuffer = [];
-const MAX_BUFFER_SIZE = 5; // iOS Safari 극한 최적화: 5개로 감소
-const EMERGENCY_BUFFER_SIZE = 2; // 응급 상황 시 2개만 유지
+const MAX_BUFFER_SIZE = 20;
 
 // Service Worker 설치
 self.addEventListener('install', (event) => {
@@ -59,12 +58,9 @@ let backgroundState = {
   appState: 'active'
 };
 
-// 강화된 연결 상태 추적
+// 연결 상태 추적
 let lastHeartbeatTime = Date.now();
 let connectionHealthCheck = null;
-let longTermConnectionCheck = null; // 장기간 백그라운드 연결 체크
-let backgroundStartTime = null; // 백그라운드 시작 시간 추적
-let isLongTermBackground = false; // 10분+ 백그라운드 상태
 
 // 클라이언트와의 메시지 통신 설정
 self.addEventListener('message', (event) => {
@@ -118,36 +114,10 @@ self.addEventListener('message', (event) => {
         sendBufferedMessagesToClient();
       }, 100);
     } else if (becameBackground) {
-      // 백그라운드 시작 시간 기록
-      if (!backgroundStartTime) {
-        backgroundStartTime = Date.now();
-        isLongTermBackground = false;
-        console.log('[SW] App went to background - tracking started:', {
-          trigger: backgroundState.trigger,
-          currentBufferSize: backgroundMessageBuffer.length,
-          startTime: new Date(backgroundStartTime).toLocaleTimeString()
-        });
-        
-        // 장기간 백그라운드 감지용 타이머 시작
-        startLongTermBackgroundMonitoring();
-      }
-    } else if (!backgroundState.isBackground && backgroundStartTime) {
-      // 백그라운드에서 복귀
-      const backgroundDuration = Date.now() - backgroundStartTime;
-      console.log('[SW] App returned from background:', {
-        duration: Math.round(backgroundDuration / 1000) + 's',
-        wasLongTerm: isLongTermBackground,
-        bufferedMessages: backgroundMessageBuffer.length
+      console.log('[SW] App went to background:', {
+        trigger: backgroundState.trigger,
+        currentBufferSize: backgroundMessageBuffer.length
       });
-      
-      backgroundStartTime = null;
-      isLongTermBackground = false;
-      
-      // 장기간 백그라운드 모니터링 정리
-      if (longTermConnectionCheck) {
-        clearInterval(longTermConnectionCheck);
-        longTermConnectionCheck = null;
-      }
     }
   } else if (event.data.type === 'GET_BUFFERED_MESSAGES') {
     // 클라이언트가 버퍼된 메시지를 요청할 때
@@ -237,16 +207,16 @@ async function sendBufferedMessagesToClient() {
       
       console.log(`[SW] Successfully sent ${unprocessedMessages.length} messages to ${successCount} clients`);
       
-      // 2초 후 처리된 메시지들 정리 (메모리 최적화)
+      // 5초 후 처리된 메시지들 정리 (시간 여유)
       setTimeout(() => {
         const beforeLength = backgroundMessageBuffer.length;
         backgroundMessageBuffer = backgroundMessageBuffer.filter(msg => !msg.processed);
         const afterLength = backgroundMessageBuffer.length;
         
-        if (beforeLength !== afterLength && process.env.NODE_ENV === 'development') {
+        if (beforeLength !== afterLength) {
           console.log(`[SW] Cleaned up ${beforeLength - afterLength} processed messages`);
         }
-      }, 2000);
+      }, 5000);
     }
     
   } catch (error) {
@@ -254,165 +224,26 @@ async function sendBufferedMessagesToClient() {
   }
 }
 
-// 강화된 연결 상태 확인 (모바일 백그라운드 특화)
+// 연결 상태 확인
 function checkConnectionHealth() {
   const now = Date.now();
   const timeSinceLastHeartbeat = now - lastHeartbeatTime;
+  const heartbeatTimeout = 90000; // 90초 (하트비트 간격의 3배)
   
-  // 백그라운드 상태에 따른 동적 타임아웃 설정
-  const isInBackground = backgroundState.isBackground;
-  const timeInBackground = backgroundStartTime ? now - backgroundStartTime : 0;
-  
-  let heartbeatTimeout;
-  if (isInBackground && timeInBackground > 600000) { // 10분+ 백그라운드
-    heartbeatTimeout = 300000; // 5분 (장기 백그라운드)
-    isLongTermBackground = true;
-  } else if (isInBackground) {
-    heartbeatTimeout = 180000; // 3분 (단기 백그라운드)
-  } else {
-    heartbeatTimeout = 90000; // 90초 (포그라운드)
-    isLongTermBackground = false;
-  }
-  
-  console.log('[SW] Enhanced connection health check:', {
+  console.log('[SW] Connection health check:', {
     timeSinceLastHeartbeat: Math.round(timeSinceLastHeartbeat / 1000) + 's',
     threshold: Math.round(heartbeatTimeout / 1000) + 's',
-    isHealthy: timeSinceLastHeartbeat < heartbeatTimeout,
-    isInBackground,
-    timeInBackground: Math.round(timeInBackground / 1000) + 's',
-    isLongTermBackground,
-    backgroundState: backgroundState.appState
+    isHealthy: timeSinceLastHeartbeat < heartbeatTimeout
   });
   
   if (timeSinceLastHeartbeat > heartbeatTimeout) {
-    console.log('[SW] ⚠️ Connection appears unhealthy, requesting enhanced reconnect...');
-    notifyClientToReconnect({
-      reason: 'heartbeat_timeout',
-      timeSinceLastHeartbeat,
-      backgroundDuration: timeInBackground,
-      isLongTermBackground
-    });
+    console.log('[SW] ⚠️ Connection appears unhealthy, requesting reconnect...');
+    notifyClientToReconnect();
   }
 }
 
-// 강화된 클라이언트 재연결 요청 (상세 정보 포함)
-async function notifyClientToReconnect(details = {}) {
-  try {
-    const clients = await self.clients.matchAll({
-      type: 'window',
-      includeUncontrolled: true
-    });
-    
-    const reconnectMessage = {
-      type: 'CONNECTION_UNHEALTHY',
-      message: 'Service Worker detected connection issues, requesting enhanced reconnect',
-      details: {
-        timestamp: Date.now(),
-        isLongTermBackground,
-        backgroundDuration: backgroundStartTime ? Date.now() - backgroundStartTime : 0,
-        lastHeartbeat: lastHeartbeatTime,
-        platform: backgroundState.platform || 'unknown',
-        ...details
-      }
-    };
-    
-    for (const client of clients) {
-      client.postMessage(reconnectMessage);
-    }
-    
-    console.log('[SW] Notified clients to reconnect with details:', reconnectMessage.details);
-  } catch (error) {
-    console.error('[SW] Error notifying clients to reconnect:', error);
-  }
-}
-
-// 강화된 연결 상태 모니터링 (적응형 간격)
-function startConnectionMonitoring() {
-  if (connectionHealthCheck) {
-    clearInterval(connectionHealthCheck);
-  }
-  
-  // 플랫폼 및 백그라운드 상태에 따른 동적 간격 설정
-  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(self.navigator.userAgent || '');
-  const isPWA = backgroundState.isPWA;
-  
-  let checkInterval;
-  if (isMobile && isPWA) {
-    checkInterval = 30000; // PWA 모바일: 30초 (가장 빈번)
-  } else if (isMobile) {
-    checkInterval = 60000; // 모바일 브라우저: 1분
-  } else {
-    checkInterval = 120000; // 데스크톱: 2분
-  }
-  
-  connectionHealthCheck = setInterval(() => {
-    checkConnectionHealth();
-    
-    // 메모리 압박 체크도 함께 수행
-    const memoryPressure = checkMemoryPressure();
-    if (memoryPressure > 0.9) {
-      console.warn('[SW] 🆘 Critical memory pressure during connection check');
-      performEmergencyCleanup();
-    }
-  }, checkInterval);
-  
-  console.log(`[SW] Started enhanced connection monitoring (${checkInterval/1000}s interval, mobile: ${isMobile}, PWA: ${isPWA})`);
-}
-
-// 장기간 백그라운드 모니터링
-function startLongTermBackgroundMonitoring() {
-  // 기존 타이머가 있으면 정리
-  if (longTermConnectionCheck) {
-    clearInterval(longTermConnectionCheck);
-  }
-  
-  // 10분마다 장기 백그라운드 상태 체크
-  longTermConnectionCheck = setInterval(() => {
-    const backgroundDuration = backgroundStartTime ? Date.now() - backgroundStartTime : 0;
-    
-    if (backgroundDuration > 600000) { // 10분 이상
-      if (!isLongTermBackground) {
-        isLongTermBackground = true;
-        console.log('[SW] 🕐 Long-term background state detected:', {
-          duration: Math.round(backgroundDuration / 60000) + 'min',
-          bufferedMessages: backgroundMessageBuffer.length,
-          lastHeartbeat: Math.round((Date.now() - lastHeartbeatTime) / 1000) + 's ago'
-        });
-        
-        // 장기 백그라운드 상태에서 특별 처리
-        handleLongTermBackgroundState();
-      }
-    }
-  }, 600000); // 10분마다 체크
-}
-
-// 장기 백그라운드 상태 특별 처리
-function handleLongTermBackgroundState() {
-  console.log('[SW] 🔄 Handling long-term background state...');
-  
-  // 1. 연결 상태 강제 재확인
-  const timeSinceHeartbeat = Date.now() - lastHeartbeatTime;
-  if (timeSinceHeartbeat > 300000) { // 5분 이상 하트비트 없음
-    console.log('[SW] 🚨 No heartbeat for 5+ minutes, forcing reconnection...');
-    notifyClientToReconnect({
-      reason: 'long_term_background_no_heartbeat',
-      timeSinceHeartbeat
-    });
-  }
-  
-  // 2. 메시지 버퍼 상태 체크 및 최적화
-  if (backgroundMessageBuffer.length > MAX_BUFFER_SIZE / 2) {
-    console.log('[SW] 🧹 Optimizing message buffer for long-term background...');
-    const importantMessages = backgroundMessageBuffer.filter(msg => !msg.processed).slice(-5);
-    backgroundMessageBuffer = importantMessages;
-  }
-  
-  // 3. 클라이언트에게 상태 알림
-  notifyClientsOfLongTermBackground();
-}
-
-// 장기 백그라운드 상태 클라이언트 알림
-async function notifyClientsOfLongTermBackground() {
+// 클라이언트에게 재연결 요청
+async function notifyClientToReconnect() {
   try {
     const clients = await self.clients.matchAll({
       type: 'window',
@@ -421,111 +252,58 @@ async function notifyClientsOfLongTermBackground() {
     
     for (const client of clients) {
       client.postMessage({
-        type: 'LONG_TERM_BACKGROUND_DETECTED',
-        data: {
-          duration: backgroundStartTime ? Date.now() - backgroundStartTime : 0,
-          bufferedMessages: backgroundMessageBuffer.length,
-          lastHeartbeat: lastHeartbeatTime,
-          timestamp: Date.now()
-        }
+        type: 'CONNECTION_UNHEALTHY',
+        message: 'Service Worker detected connection issues, please reconnect'
       });
     }
+    
+    console.log('[SW] Notified clients to reconnect');
   } catch (error) {
-    console.error('[SW] Error notifying clients of long-term background:', error);
+    console.error('[SW] Error notifying clients to reconnect:', error);
   }
 }
 
-// 메모리 압박 감지 함수
-function checkMemoryPressure() {
-  // Service Worker에서는 performance.memory에 직접 접근할 수 없으므로
-  // 간접적인 지표들을 사용
-  const bufferSize = backgroundMessageBuffer.length;
-  const cacheSize = recentNotifications.size;
-  
-  // 버퍼와 캐시 크기를 기반으로 메모리 압박 추정
-  if (bufferSize >= MAX_BUFFER_SIZE && cacheSize > 10) {
-    return 0.9; // 높은 압박
-  } else if (bufferSize >= MAX_BUFFER_SIZE / 2 || cacheSize > 5) {
-    return 0.7; // 중간 압박
+// 주기적 연결 상태 확인 시작 (모바일 백그라운드 최적화)
+function startConnectionMonitoring() {
+  if (connectionHealthCheck) {
+    clearInterval(connectionHealthCheck);
   }
-  return 0.3; // 낮은 압박
-}
-
-// 응급 메모리 정리 함수
-function performEmergencyCleanup() {
-  console.warn('[SW] 🆘 Performing emergency memory cleanup');
   
-  // 버퍼를 최소한으로 줄임
-  backgroundMessageBuffer = backgroundMessageBuffer.slice(-EMERGENCY_BUFFER_SIZE);
+  // 모바일에서는 더 자주 확인 (1분마다)
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(self.navigator.userAgent || '');
+  const checkInterval = isMobile ? 60000 : 120000; // 모바일: 1분, 데스크톱: 2분
   
-  // 알림 캐시 완전 정리
-  recentNotifications.clear();
-  
-  // 처리된 메시지 즉시 정리
-  backgroundMessageBuffer = backgroundMessageBuffer.filter(msg => !msg.processed);
-  
-  console.warn(`[SW] Emergency cleanup completed: ${backgroundMessageBuffer.length} messages remaining`);
+  connectionHealthCheck = setInterval(checkConnectionHealth, checkInterval);
+  console.log(`[SW] Started connection monitoring (${isMobile ? '1min' : '2min'} interval)`);
 }
 
 // Service Worker 시작 시 모니터링 시작
 startConnectionMonitoring();
-
-// 주기적 메모리 압박 체크 (30초마다)
-setInterval(() => {
-  const memoryPressure = checkMemoryPressure();
-  if (memoryPressure > 0.8) {
-    performEmergencyCleanup();
-  }
-}, 30000);
 
 // 백그라운드에서 메시지 처리 (개선된 버전)
 function handleBackgroundMessage(messageData) {
   // 메시지 수신 = 연결이 살아있음을 의미
   lastHeartbeatTime = Date.now();
   
-  // 개선된 중복 메시지 방지 - 더 관대한 시간 창과 컨텐츠 기반 체크
+  // 안전한 중복 메시지 방지 - ID만 체크
   const isDuplicate = backgroundMessageBuffer.some(msg => {
-    // ID가 정확히 일치하는 경우
-    if (msg.id === messageData.id) {
-      return true;
-    }
-    
-    // 컨텐츠와 시간 기반 중복 체크 (네트워크 지연 고려)
-    const timeDiff = Math.abs(Date.now() - msg.receivedAt);
-    if (timeDiff < 2000 && // 2초 이내
-        msg.text === messageData.text && 
-        msg.userId === messageData.userId) {
-      console.log('[SW] Content-based duplicate detected:', {
-        id: messageData.id,
-        existingId: msg.id,
-        timeDiff
-      });
-      return true;
-    }
-    
-    return false;
+    // ID가 정확히 일치하는 경우만 중복으로 간주
+    return msg.id === messageData.id;
   });
   
-  // 더 관대한 중복 처리 (모바일 네트워크 지연 고려)
+  // 추가 안전 체크: 아주 최근(반 초)의 동일한 ID만 중복 처리
   if (isDuplicate) {
-    const existingMsg = backgroundMessageBuffer.find(msg => 
-      msg.id === messageData.id || 
-      (Math.abs(Date.now() - msg.receivedAt) < 2000 && 
-       msg.text === messageData.text && 
-       msg.userId === messageData.userId)
-    );
-    
-    if (existingMsg && Date.now() - existingMsg.receivedAt < 1500) {
-      // 1.5초 내의 중복만 버림 (모바일 네트워크 지연 고려)
-      console.log('[SW] Recent duplicate message ignored (within 1.5s):', {
+    const existingMsg = backgroundMessageBuffer.find(msg => msg.id === messageData.id);
+    if (existingMsg && Date.now() - existingMsg.receivedAt < 500) {
+      // 0.5초 내의 정확한 ID 일치만 중복으로 처리
+      console.log('[SW] True duplicate message ignored (same ID within 0.5s):', {
         id: messageData.id,
-        existingId: existingMsg.id,
         timeDiff: Date.now() - existingMsg.receivedAt
       });
       return;
     } else {
-      // 시간 차이가 큰 경우 새 메시지로 처리
-      console.log('[SW] Similar message but with time gap, allowing:', {
+      // 시간 차이가 큰 경우 새 메시지로 처리 (재시도 가능)
+      console.log('[SW] Message with same ID but different timing, allowing:', {
         id: messageData.id,
         timeDiff: existingMsg ? Date.now() - existingMsg.receivedAt : 'N/A'
       });
@@ -543,15 +321,9 @@ function handleBackgroundMessage(messageData) {
   
   backgroundMessageBuffer.push(bufferedMessage);
   
-  // 버퍼 크기 제한 (동적 조정)
-  const memoryThreshold = checkMemoryPressure();
-  const currentLimit = memoryThreshold > 0.8 ? EMERGENCY_BUFFER_SIZE : MAX_BUFFER_SIZE;
-  
-  if (backgroundMessageBuffer.length > currentLimit) {
-    backgroundMessageBuffer = backgroundMessageBuffer.slice(-currentLimit);
-    if (memoryThreshold > 0.8) {
-      console.warn(`[SW] 🆘 Emergency buffer limit applied: ${EMERGENCY_BUFFER_SIZE} messages`);
-    }
+  // 버퍼 크기 제한
+  if (backgroundMessageBuffer.length > MAX_BUFFER_SIZE) {
+    backgroundMessageBuffer = backgroundMessageBuffer.slice(-MAX_BUFFER_SIZE);
   }
   
   console.log('[SW] Message added to background buffer:', {
@@ -607,10 +379,10 @@ function scheduleBackgroundNotification(messageData) {
   
   recentNotifications.add(recentNotificationKey);
   
-  // 30초 후 정리 (메모리 최적화)
+  // 2분 후 정리 (더 빠른 정리)
   setTimeout(() => {
     recentNotifications.delete(recentNotificationKey);
-  }, 30 * 1000);
+  }, 2 * 60 * 1000);
   
   // 알림 데이터 준비
   const notificationData = {
@@ -706,34 +478,15 @@ self.addEventListener('push', (event) => {
     ]
   };
 
-  // 플랫폼별 최적화 (더 정확한 PWA 감지)
-  const isAndroidPWA = isAndroid && (
-    matchMedia('(display-mode: standalone)').matches || 
-    matchMedia('(display-mode: fullscreen)').matches
-  );
-  
+  // 플랫폼별 최적화
   if (isAndroid && (isChrome || isSamsung)) {
     options.image = '/images/cat.jpg';
     options.timestamp = Date.now();
-    options.vibrate = isAndroidPWA ? [400, 200, 400, 200, 400] : [300, 150, 300]; // PWA에서 더 강한 진동
-    
-    // 안드로이드 PWA에서는 더 강력한 알림 설정
-    if (isAndroidPWA) {
-      options.requireInteraction = true;
-      options.persistent = true;
-      options.renotify = true;
-    }
+    options.vibrate = [400, 100, 400, 100, 400]; // 더 강한 진동
   } else if (isIOS) {
-    // iOS PWA 감지 (navigator.standalone은 SW에서 사용 불가하므로 다른 방법 사용)
-    const isIOSPWA = matchMedia('(display-mode: standalone)').matches;
-    
+    // iOS에서는 배지와 이미지 제한
     options.badge = '/images/cat.jpg';
-    options.vibrate = isIOSPWA ? [300, 150, 300] : [200, 100, 200];
-    
-    // iOS PWA에서는 requireInteraction을 false로 설정하는 것이 더 안정적
-    if (isIOSPWA) {
-      options.requireInteraction = false;
-    }
+    options.vibrate = [200, 100, 200];
   }
 
   // 푸시 데이터 처리

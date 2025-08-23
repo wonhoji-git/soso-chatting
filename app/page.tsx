@@ -140,12 +140,17 @@ export default function Home() {
       <div className="min-h-screen flex items-center justify-center p-4 lg:p-8">
         <div className="max-w-6xl w-full lg:max-w-7xl xl:max-w-none">
           <div className="text-center mb-8 lg:mb-12">
-            <h1 className="text-3xl md:text-5xl lg:text-6xl xl:text-7xl font-bold text-white mb-4 drop-shadow-lg animate-bounce-gentle">
-              🎉 소소 채팅방에 오신 것을 환영합니다! 🎉
+            <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold text-white mb-4 drop-shadow-lg animate-bounce-gentle">
+              🎮 소소 채팅방에 온 걸 환영해요! 🌟
             </h1>
-            <p className="text-lg md:text-xl lg:text-2xl xl:text-3xl text-white/90 drop-shadow-lg">
-              귀여운 캐릭터들과 함께 즐거운 대화를 나누어보세요!
+            <p className="text-lg md:text-xl lg:text-2xl text-white/90 drop-shadow-lg">
+              친구들과 재미있게 이야기하는 곳이에요! 😊
             </p>
+            <div className="mt-4 bg-white/20 backdrop-blur-sm rounded-2xl p-4 max-w-md mx-auto">
+              <p className="text-white/90 text-sm md:text-base">
+                💡 첫 번째 단계: 마음에 드는 캐릭터를 골라주세요!
+              </p>
+            </div>
           </div>
           <AvatarSelector onAvatarSelect={handleAvatarSelect} />
         </div>
@@ -158,12 +163,17 @@ export default function Home() {
       <div className="min-h-screen flex items-center justify-center p-4 lg:p-8">
         <div className="max-w-2xl w-full lg:max-w-4xl">
           <div className="text-center mb-8 lg:mb-12">
-            <h1 className="text-3xl md:text-4xl lg:text-5xl xl:text-6xl font-bold text-white mb-4 drop-shadow-lg">
-              🎯 마지막 단계입니다! 🎯
+            <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold text-white mb-4 drop-shadow-lg">
+              🎯 거의 다 왔어요! 🎯
             </h1>
-            <p className="text-base md:text-lg lg:text-xl xl:text-2xl text-white/90 drop-shadow-lg">
-              선택한 캐릭터: {selectedAvatar.split('/').pop()?.replace('.jpg', '')}
+            <p className="text-base md:text-lg lg:text-xl text-white/90 drop-shadow-lg">
+              선택한 친구: {selectedAvatar.split('/').pop()?.replace('.jpg', '')} ✨
             </p>
+            <div className="mt-4 bg-white/20 backdrop-blur-sm rounded-2xl p-4 max-w-md mx-auto">
+              <p className="text-white/90 text-sm md:text-base">
+                💡 두 번째 단계: 멋진 이름을 정해주세요!
+              </p>
+            </div>
           </div>
           <NameInput onNameSubmit={handleNameSubmit} />
         </div>
