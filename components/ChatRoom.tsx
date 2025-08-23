@@ -21,6 +21,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [calmMode, setCalmMode] = useState(false); // Animation control for focused learning
+  const [hearts, setHearts] = useState<Array<{id: string; x: number; y: number}>>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const hasJoinedRef = useRef(false);
   const isUnmountingRef = useRef(false);
@@ -120,7 +121,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
     if (atBottom) {
       setUnreadCount(0);
     }
-  }, [isAtBottom]);
+  }, []);
 
   // 메시지 변경 시 스크롤 처리
   useEffect(() => {
@@ -252,6 +253,9 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
       stopTyping(currentUser);
       await sendMessage(newMessage.trim(), currentUser);
       setNewMessage('');
+      
+      // 메시지 전송 성공 시 하트 애니메이션 생성
+      createHeartAnimation();
     } catch (error) {
         console.error('Failed to send message:', error);
         
@@ -337,10 +341,25 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
     setShowEmojiPicker(false);
   };
 
-  // 랜덤 애니메이션 클래스
-  const getRandomAnimation = () => {
-    const animations = ['animate-bounce', 'animate-pulse', 'animate-spin'];
-    return animations[Math.floor(Math.random() * animations.length)];
+  // 하트 애니메이션 생성 함수
+  const createHeartAnimation = () => {
+    // 한 번에 3-5개의 하트 생성
+    const heartCount = Math.floor(Math.random() * 3) + 3; // 3~5개
+    
+    for (let i = 0; i < heartCount; i++) {
+      setTimeout(() => {
+        const heartId = `heart-${Date.now()}-${Math.random()}-${i}`;
+        const x = Math.random() * 400 + 100; // 더 넓은 범위에서 랜덤 위치
+        const y = 0;
+        
+        setHearts(prev => [...prev, { id: heartId, x, y }]);
+        
+        // 4초 후 하트 제거
+        setTimeout(() => {
+          setHearts(prev => prev.filter(heart => heart.id !== heartId));
+        }, 4000);
+      }, i * 200); // 0.2초 간격으로 순차 생성
+    }
   };
 
 
@@ -428,6 +447,40 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
 
   return (
     <>
+      {/* 하트 애니메이션 */}
+      {hearts.map((heart) => (
+        <div
+          key={heart.id}
+          className="fixed pointer-events-none"
+          style={{
+            left: `${heart.x}px`,
+            bottom: '100px',
+            animation: 'floatUp 4s ease-out forwards',
+            fontSize: '28px',
+            zIndex: 99999,
+            filter: 'drop-shadow(2px 2px 4px rgba(0,0,0,0.3)) grayscale(0.7) brightness(0.6)'
+          }}
+        >
+          🤍
+        </div>
+      ))}
+      
+      <style jsx>{`
+        @keyframes floatUp {
+          0% {
+            transform: translateY(0) rotate(0deg) scale(0.5);
+            opacity: 0.8;
+          }
+          20% {
+            transform: translateY(-50px) rotate(72deg) scale(1);
+            opacity: 1;
+          }
+          100% {
+            transform: translateY(-400px) rotate(360deg) scale(0.3);
+            opacity: 0;
+          }
+        }
+      `}</style>
       
       <div 
         className={`flex mobile-chat-container lg:max-w-7xl lg:mx-auto lg:my-4 lg:rounded-3xl lg:shadow-2xl bg-gradient-to-br from-pink-200 via-purple-200 to-indigo-300 relative overflow-hidden lg:h-[calc(100vh-2rem)] ${calmMode ? 'calm-mode' : ''}`}
@@ -437,25 +490,16 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
           height: '-webkit-fill-available'
         }}
       >
-      {/* 떠다니는 배경 요소들 - 반응형 크기 (집중모드에서는 축소) */}
-      <div className={`absolute inset-0 overflow-hidden pointer-events-none transition-opacity duration-500 ${calmMode ? 'opacity-20' : 'opacity-100'}`}>
-        <div className={`absolute top-10 left-10 text-2xl md:text-4xl lg:text-5xl ${calmMode ? '' : 'animate-bounce'}`}>🌟</div>
-        <div className={`absolute top-20 right-20 text-xl md:text-3xl lg:text-4xl ${calmMode ? '' : 'animate-pulse'}`}>🎈</div>
-        <div className={`absolute bottom-32 left-16 text-lg md:text-2xl lg:text-3xl ${calmMode ? '' : 'animate-bounce delay-300'}`}>🦄</div>
-        <div className={`absolute bottom-20 right-32 text-xl md:text-3xl lg:text-4xl ${calmMode ? '' : 'animate-pulse delay-500'}`}>🌈</div>
-        <div className={`absolute top-1/2 left-1/4 text-lg md:text-2xl lg:text-3xl ${calmMode ? '' : 'animate-spin'}`} style={{animationDuration: calmMode ? '0s' : '3s'}}>⭐</div>
-        <div className={`absolute top-1/3 right-1/3 text-lg md:text-2xl lg:text-3xl ${calmMode ? '' : 'animate-bounce delay-700'}`}>✨</div>
-      </div>
 
       {/* 재연결 알림 */}
       {showReconnectAlert && (
         <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 px-4">
-          <div className={`${connectionDisplay.bgColor} ${connectionDisplay.textColor} px-4 py-3 rounded-2xl shadow-2xl border-3 border-white max-w-sm animate-bounce`}>
+          <div className={`${connectionDisplay.bgColor} ${connectionDisplay.textColor} px-4 py-3 rounded-2xl shadow-2xl border-3 border-white max-w-sm`}>
             <div className="flex items-center space-x-2 flex-wrap">
               <span className="font-bold text-sm">🚨 연결이 끊어졌어요!</span>
               <button
                 onClick={handleReconnect}
-                className="px-3 py-1 bg-gradient-to-r from-blue-400 to-purple-500 text-white rounded-full hover:from-blue-500 hover:to-purple-600 transition-all text-sm font-bold shadow-lg transform hover:scale-105"
+                className="px-3 py-1 bg-gradient-to-r from-blue-400 to-purple-500 text-white rounded-full hover:from-blue-500 hover:to-purple-600 text-sm font-bold shadow-lg"
               >
                 🔄 재연결
               </button>
@@ -520,20 +564,20 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
         {/* 사이드바 헤더 */}
         <div className="flex items-center justify-between mb-6 md:block lg:mb-8">
           <div className="text-center">
-            <h2 className="text-lg md:text-xl lg:text-2xl font-bold bg-gradient-to-r from-pink-600 to-purple-600 bg-clip-text text-transparent animate-pulse">
-              🌟 친구들 🌟
+            <h2 className="text-lg md:text-xl lg:text-2xl font-bold bg-gradient-to-r from-pink-600 to-purple-600 bg-clip-text text-transparent">
+              친구들
             </h2>
             <div className="flex items-center justify-center mt-2 bg-white/50 rounded-full px-3 py-1">
               <span className="text-sm mr-1">{connectionDisplay.statusIcon}</span>
-              <div className={`w-3 h-3 rounded-full ${connectionDisplay.color} animate-pulse`}></div>
+              <div className={`w-3 h-3 rounded-full ${connectionDisplay.color}`}></div>
               <span className={`text-xs ml-2 ${connectionDisplay.textColor} font-bold`}>
                 {connectionDisplay.text}
               </span>
             </div>
             <div className="mt-3 bg-gradient-to-r from-pink-200 to-purple-200 rounded-2xl p-2 lg:p-3">
               <p className="font-bold text-purple-700 text-sm lg:text-base">
-                🎉 총 {totalUserCount}명이 함께해요! 
-                {totalUserCount === 1 ? '(나 혼자)' : `(친구 ${otherUsers.length}명 + 나)`} 🎉
+                총 {totalUserCount}명이 함께해요! 
+                {totalUserCount === 1 ? '(나 혼자)' : `(친구 ${otherUsers.length}명 + 나)`}
               </p>
             </div>
           </div>
@@ -544,7 +588,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
               setShowSidebar(false);
               setTimeout(() => setSidebarAnimation('idle'), 300);
             }}
-            className="md:hidden mobile-touch-target p-4 bg-gradient-to-r from-red-400 to-pink-500 text-white rounded-full shadow-lg hover:from-red-500 hover:to-pink-600 transition-all transform hover:scale-110 active:scale-95 focus:ring-4 focus:ring-red-300 animate-pulse"
+            className="md:hidden mobile-touch-target p-4 bg-gradient-to-r from-red-400 to-pink-500 text-white rounded-full shadow-lg hover:from-red-500 hover:to-pink-600"
             aria-label="친구 목록 닫기"
           >
             <span className="text-lg">❌</span>
@@ -553,7 +597,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
         
         <div className="space-y-3 mb-6 lg:space-y-4 lg:mb-8">
           {/* 현재 사용자 표시 */}
-          <div className="flex items-center space-x-3 p-4 lg:p-5 bg-gradient-to-r from-yellow-200 to-orange-200 rounded-2xl border-3 border-yellow-400 shadow-lg transform hover:scale-105 transition-all duration-200">
+          <div className="flex items-center space-x-3 p-4 lg:p-5 bg-gradient-to-r from-yellow-200 to-orange-200 rounded-2xl border-3 border-yellow-400 shadow-lg">
             <div className="relative">
               <Image
                 src={currentUser.avatar}
@@ -562,16 +606,15 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
                 height={40}
                 className="rounded-full w-12 h-12 lg:w-14 lg:h-14 object-cover border-3 border-white shadow-md"
               />
-              <div className="absolute -top-1 -right-1 text-lg animate-bounce">👑</div>
             </div>
             <div className="flex-1 min-w-0">
-              <p className="font-bold text-purple-800 truncate text-sm lg:text-base">🌟 {currentUser.name} (나에요!) 🌟</p>
+              <p className="font-bold text-purple-800 truncate text-sm lg:text-base">{currentUser.name} (나에요!)</p>
               <div className="flex items-center space-x-1 mt-1">
-                <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse shadow-lg"></div>
-                <span className="text-xs text-green-700 font-bold">✨ 온라인 ✨</span>
+                <div className="w-3 h-3 bg-green-400 rounded-full shadow-lg"></div>
+                <span className="text-xs text-green-700 font-bold">온라인</span>
               </div>
               <p className="text-xs text-purple-600 mt-1 font-medium">
-                🕐 입장: {new Date(currentUser.joinedAt).toLocaleTimeString('ko-KR', {
+                입장: {new Date(currentUser.joinedAt).toLocaleTimeString('ko-KR', {
                   hour: '2-digit',
                   minute: '2-digit'
                 })}
@@ -583,7 +626,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
           {otherUsers.map((user, index) => (
             <div 
               key={`${user.id}-${user.joinedAt}`} 
-              className="flex items-center space-x-3 p-3 lg:p-4 bg-gradient-to-r from-pink-100 to-purple-100 rounded-2xl border-2 border-pink-200 shadow-md transform hover:scale-105 transition-all duration-200 hover:shadow-lg animate-in slide-in-from-left"
+              className="flex items-center space-x-3 p-3 lg:p-4 bg-gradient-to-r from-pink-100 to-purple-100 rounded-2xl border-2 border-pink-200 shadow-md hover:shadow-lg"
               style={{animationDelay: `${index * 0.1}s`}}
             >
               <div className="relative">
@@ -594,17 +637,16 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
                   height={40}
                   className="rounded-full w-10 h-10 lg:w-12 lg:h-12 object-cover border-2 border-white shadow-sm"
                 />
-                <div className="absolute -bottom-1 -right-1 text-sm">🎈</div>
               </div>
               <div className="flex-1 min-w-0">
-                <p className="font-bold text-purple-700 truncate text-sm lg:text-base">🦄 {user.name}</p>
+                <p className="font-bold text-purple-700 truncate text-sm lg:text-base">{user.name}</p>
                 <div className="flex items-center space-x-1 mt-1">
-                  <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                  <span className="text-xs text-green-600 font-medium">🌈 온라인</span>
+                  <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+                  <span className="text-xs text-green-600 font-medium">온라인</span>
                 </div>
                 {user.joinedAt && (
                   <p className="text-xs text-purple-500 mt-1">
-                    ⏰ {new Date(user.joinedAt).toLocaleTimeString('ko-KR', {
+                    {new Date(user.joinedAt).toLocaleTimeString('ko-KR', {
                       hour: '2-digit',
                       minute: '2-digit'
                     })}
@@ -616,14 +658,8 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
 
           {otherUsers.length === 0 && (
             <div className="text-center py-6 bg-gradient-to-r from-blue-100 to-purple-100 rounded-2xl border-2 border-dashed border-purple-300">
-              <div className="text-4xl mb-2 animate-bounce">🌟</div>
               <p className="text-sm font-bold text-purple-700">나 혼자만 있어요!</p>
-              <p className="text-xs mt-1 text-purple-600">친구들을 초대해서 함께 놀아요! 🎉✨</p>
-              <div className="flex justify-center space-x-2 mt-2">
-                <span className="animate-bounce delay-100">🎈</span>
-                <span className="animate-bounce delay-200">🦄</span>
-                <span className="animate-bounce delay-300">🌈</span>
-              </div>
+              <p className="text-xs mt-1 text-purple-600">친구들을 초대해서 함께 놀아요!</p>
             </div>
           )}
         </div>
@@ -632,16 +668,16 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
           {connectionStatus === 'failed' && (
             <button
               onClick={handleReconnect}
-              className="w-full px-4 py-3 bg-gradient-to-r from-blue-400 to-purple-500 text-white font-bold rounded-2xl hover:from-blue-500 hover:to-purple-600 transition-all duration-200 shadow-xl transform hover:scale-105"
+              className="w-full px-4 py-3 bg-gradient-to-r from-blue-400 to-purple-500 text-white font-bold rounded-2xl hover:from-blue-500 hover:to-purple-600 shadow-xl"
             >
-              🔄 다시 연결하기! ✨
+              다시 연결하기
             </button>
           )}
           <button
             onClick={handleLogout}
-            className="w-full px-4 py-3 bg-gradient-to-r from-pink-400 to-red-400 text-white font-bold rounded-2xl hover:from-pink-500 hover:to-red-500 transition-all duration-200 shadow-xl transform hover:scale-105"
+            className="w-full px-4 py-3 bg-gradient-to-r from-pink-400 to-red-400 text-white font-bold rounded-2xl hover:from-pink-500 hover:to-red-500 shadow-xl"
           >
-            🚪 안녕히가세요! 👋
+            안녕히가세요
           </button>
         </div>
       </div>
@@ -668,14 +704,13 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
                   height={40}
                   className="rounded-full w-10 h-10 md:w-12 md:h-12 object-cover flex-shrink-0 border-3 border-white shadow-lg"
                 />
-                <div className="absolute -top-1 -right-1 text-sm animate-spin" style={{animationDuration: '2s'}}>⭐</div>
               </div>
               <div className="min-w-0 flex-1">
                 <h1 className="text-lg md:text-2xl lg:text-3xl xl:text-4xl font-bold bg-gradient-to-r from-pink-600 to-purple-600 bg-clip-text text-transparent truncate">
-                  🌈 소소 채팅방 🦄
+                  소소 채팅방
                 </h1>
                 <p className="text-sm md:text-base lg:text-lg text-purple-600 truncate font-medium">
-                  안녕하세요, {currentUser.name}님! 🎉✨
+                  안녕하세요, {currentUser.name}님!
                 </p>
               </div>
             </div>
@@ -684,14 +719,14 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
               {/* Calm Mode Toggle for focused learning */}
               <button
                 onClick={() => setCalmMode(!calmMode)}
-                className={`mobile-touch-target p-2 md:p-3 rounded-xl font-bold text-xs md:text-sm transition-all transform hover:scale-105 active:scale-95 ${
+                className={`mobile-touch-target p-2 md:p-3 rounded-xl font-bold text-xs md:text-sm ${
                   calmMode 
                     ? 'bg-blue-500 text-white shadow-lg' 
                     : 'bg-white/70 text-purple-600 hover:bg-white/90'
                 }`}
                 title={calmMode ? '집중모드 끄기' : '집중모드 켜기'}
               >
-                {calmMode ? '😌 집중중' : '🎪 애니메이션'}
+                {calmMode ? '집중' : '일반'}
               </button>
               
               {/* 알림 설정 */}
@@ -713,30 +748,15 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
             overscrollBehavior: 'contain',
             WebkitOverflowScrolling: 'touch', // iOS 모바일 스크롤 최적화
             scrollbarWidth: 'thin', // Firefox에서 스크롤바 얇게
-            scrollbarColor: '#ec4899 transparent' // Firefox 스크롤바 색상
+            scrollbarColor: '#ec4899 transparent', // Firefox 스크롤바 색상
+            backgroundImage: 'url(/images/boddle.jpg)',
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            backgroundRepeat: 'no-repeat',
+            backgroundAttachment: 'fixed'
           }}
         >
-          {/* 배경 패턴 - 반응형 크기 */}
-          <div className="absolute inset-0 opacity-5 pointer-events-none">
-            <div className="absolute top-10 left-10 text-4xl md:text-6xl lg:text-8xl">🌟</div>
-            <div className="absolute top-32 right-16 text-2xl md:text-4xl lg:text-6xl">🎈</div>
-            <div className="absolute bottom-20 left-20 text-3xl md:text-5xl lg:text-7xl">🦄</div>
-            <div className="absolute bottom-40 right-12 text-xl md:text-3xl lg:text-5xl">🌈</div>
-          </div>
 
-          {messages.length === 0 && (
-            <div className="text-center text-purple-500 mt-8 lg:mt-12 bg-gradient-to-r from-pink-100 to-purple-100 rounded-2xl p-6 lg:p-8 xl:p-10 border-2 border-dashed border-purple-300 relative z-1">
-              <div className="text-4xl md:text-6xl lg:text-8xl mb-4 animate-bounce">🎉</div>
-              <p className="text-lg md:text-xl lg:text-2xl xl:text-3xl font-bold text-purple-700">첫 번째 메시지를 보내보세요!</p>
-              <p className="text-sm md:text-base lg:text-lg mt-2 text-purple-600">친구들과 재미있게 대화해요! 🌈✨</p>
-              <div className="flex justify-center space-x-3 lg:space-x-4 mt-4">
-                <span className="text-2xl lg:text-3xl xl:text-4xl animate-bounce delay-100">🎈</span>
-                <span className="text-2xl lg:text-3xl xl:text-4xl animate-bounce delay-200">🦄</span>
-                <span className="text-2xl lg:text-3xl xl:text-4xl animate-bounce delay-300">🌟</span>
-                <span className="text-2xl lg:text-3xl xl:text-4xl animate-bounce delay-400">🎊</span>
-              </div>
-            </div>
-          )}
           {messages.map((message) => {
             // 시스템 메시지인 경우 중앙 정렬로 표시
             if (message.isSystemMessage || message.userId === 'system') {
@@ -761,9 +781,19 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
                     alt={message.userName}
                     width={35}
                     height={35}
-                    className="rounded-full w-8 h-8 md:w-9 md:h-9 lg:w-10 lg:h-10 object-cover flex-shrink-0"
+                    className="rounded-full w-8 h-8 md:w-9 md:h-9 lg:w-10 lg:h-10 object-cover flex-shrink-0 border-2 border-white shadow-lg"
+                    style={{
+                      filter: 'brightness(1.1) contrast(1.1)',
+                      boxShadow: '0 2px 10px rgba(0, 0, 0, 0.2)'
+                    }}
                   />
-                  <div className={`chat-bubble text-sm md:text-base lg:text-lg ${message.userId === currentUser.id ? 'sent' : 'received'}`}>
+                  <div className={`chat-bubble text-sm md:text-base lg:text-lg ${message.userId === currentUser.id ? 'sent' : 'received'}`} style={{
+                    backgroundColor: message.userId === currentUser.id ? 'rgba(236, 72, 153, 0.95)' : 'rgba(255, 255, 255, 0.98)',
+                    color: message.userId === currentUser.id ? 'white' : '#1f2937',
+                    backdropFilter: 'blur(12px)',
+                    border: message.userId === currentUser.id ? '2px solid rgba(219, 39, 119, 0.4)' : '2px solid rgba(156, 163, 175, 0.4)',
+                    boxShadow: '0 6px 25px rgba(0, 0, 0, 0.2)'
+                  }}>
                     <p className="text-xs md:text-sm lg:text-base font-bold mb-1">{message.userName}</p>
                     <p className="break-words">{message.text}</p>
                     <p className="text-xs lg:text-sm opacity-70 mt-1">{formatTime(message.timestamp)}</p>
@@ -842,14 +872,14 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
           {/* 간단한 글자수 표시 */}
           {newMessage.length > 70 && (
             <div className="mb-2 text-xs text-purple-600 text-center">
-              {100 - newMessage.length}글자 남음 ✨
+              {100 - newMessage.length}글자 남음
             </div>
           )}
           <form onSubmit={handleSendMessage} className="flex space-x-2 md:space-x-3 lg:space-x-4">
             <button
               type="button"
               onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-              className="mobile-touch-target p-3 lg:p-4 text-2xl lg:text-3xl hover:bg-pink-200 rounded-2xl transition-all transform hover:scale-110 active:scale-95 flex-shrink-0"
+              className="mobile-touch-target p-3 lg:p-4 text-2xl lg:text-3xl hover:bg-pink-200 rounded-2xl flex-shrink-0"
               disabled={!isConnected}
               aria-label={showEmojiPicker ? '이모지 선택기 닫기' : '이모지 선택기 열기'}
             >
@@ -878,7 +908,7 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
               }}
               onKeyPress={handleKeyPress}
               onBlur={() => stopTyping(currentUser)}
-              placeholder={isConnected ? "재미있는 메시지를 써보세요! 🎉" : "연결을 기다리는 중... 🔄"}
+              placeholder={isConnected ? "재미있는 메시지를 써보세요!" : "연결을 기다리는 중..."}
               className="flex-1 px-3 md:px-4 lg:px-6 py-3 md:py-4 lg:py-5 rounded-2xl border-3 border-pink-300 focus:border-purple-400 focus:outline-none font-medium disabled:opacity-50 text-base lg:text-lg bg-white/80 placeholder-purple-400 mobile-input-area"
               style={{ fontSize: '16px' }} // Prevents zoom on iOS
               maxLength={100}
@@ -889,18 +919,18 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
             <button
               type="submit"
               disabled={!newMessage.trim() || !isConnected || isSending}
-              className="mobile-touch-target px-4 md:px-6 lg:px-8 py-3 md:py-4 lg:py-5 bg-gradient-to-r from-pink-400 to-purple-500 text-white font-bold rounded-2xl hover:from-pink-500 hover:to-purple-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 text-sm md:text-base lg:text-lg flex-shrink-0 shadow-lg transform hover:scale-105 active:scale-95"
+              className="mobile-touch-target px-4 md:px-6 lg:px-8 py-3 md:py-4 lg:py-5 bg-gradient-to-r from-pink-400 to-purple-500 text-white font-bold rounded-2xl hover:from-pink-500 hover:to-purple-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm md:text-base lg:text-lg flex-shrink-0 shadow-lg"
               aria-label="메시지 보내기"
             >
               {isSending ? (
                 <>
-                  <span className="hidden sm:inline">전송중... ⏳</span>
-                  <span className="sm:hidden">⏳</span>
+                  <span className="hidden sm:inline">전송중...</span>
+                  <span className="sm:hidden">...</span>
                 </>
               ) : (
                 <>
-                  <span className="hidden sm:inline">보내기! 🚀</span>
-                  <span className="sm:hidden">🚀</span>
+                  <span className="hidden sm:inline">보내기</span>
+                  <span className="sm:hidden">→</span>
                 </>
               )}
             </button>
