@@ -7,7 +7,6 @@ import { User, Message, ConnectionStatus } from '@/types/chat';
 import { usePusherContext } from '@/contexts/PusherContext';
 import { TypingIndicator } from './TypingIndicator';
 import { NotificationSettings } from './NotificationSettings';
-import { BackgroundStateDebug } from './BackgroundStateDebug';
 import { useMobileErrorTracking } from '@/hooks/useMobileErrorTracking';
 
 interface ChatRoomProps {
@@ -78,52 +77,26 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
   // 전체 사용자 수는 onlineUsers 길이 그대로 사용 (자신도 포함되어 있음)
   const totalUserCount = onlineUsers.length;
 
-  // 메시지 상태 디버깅
-  useEffect(() => {
-    console.log('📝 Messages updated:', messages);
-    console.log('📊 Messages count:', messages.length);
-  }, [messages]);
-
-  // 사용자 상태 디버깅
-  useEffect(() => {
-    console.log('👥 User state updated:');
-    console.log('  - Current user:', currentUser.id, currentUser.name);
-    console.log('  - Online users (raw):', onlineUsers.map(u => ({ id: u.id, name: u.name })));
-    console.log('  - Other users (filtered):', otherUsers.map(u => ({ id: u.id, name: u.name })));
-    console.log('  - Total count:', totalUserCount);
-    console.log('  - Other count:', otherUsers.length);
-    console.log('  - Raw online count:', onlineUsers.length);
-  }, [onlineUsers, currentUser, otherUsers, totalUserCount]);
 
   const scrollToBottom = useCallback((force = false) => {
     const container = messagesContainerRef.current;
     const endElement = messagesEndRef.current;
     
-    if (!container || !endElement) {
-      console.log('📜 Scroll elements not ready yet');
-      return;
-    }
+    if (!container || !endElement) return;
     
     if (force || isAtBottom) {
-      console.log('📜 Scrolling to bottom:', { force, isAtBottom });
-      
-      // 두 가지 방법으로 스크롤 시도 (브라우저 호환성)
       try {
-        // 방법 1: scrollIntoView 사용
         endElement.scrollIntoView({ 
           behavior: 'smooth',
           block: 'end',
           inline: 'nearest'
         });
         
-        // 방법 2: 직접 스크롤 (백업)
         setTimeout(() => {
           container.scrollTop = container.scrollHeight;
         }, 50);
         
       } catch (error) {
-        // 폴백: 직접 스크롤
-        console.log('📜 Using fallback scroll method');
         container.scrollTop = container.scrollHeight;
       }
       
@@ -138,152 +111,70 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
     if (!container) return;
     
     const { scrollTop, scrollHeight, clientHeight } = container;
-    const threshold = 100; // 100px 이내면 하단으로 간주
+    const threshold = 100;
     const atBottom = scrollTop + clientHeight >= scrollHeight - threshold;
-    
-    console.log('📜 Scroll position:', {
-      scrollTop,
-      scrollHeight,
-      clientHeight,
-      threshold,
-      atBottom,
-      isCurrentlyAtBottom: isAtBottom
-    });
     
     setIsAtBottom(atBottom);
     setShowScrollToBottom(!atBottom);
     
-    // 사용자가 스크롤을 맨 아래로 내리면 읽지 않은 메시지 카운트 초기화
     if (atBottom) {
       setUnreadCount(0);
     }
   }, [isAtBottom]);
 
-  // 메시지 변경 시 스크롤 처리 (개선됨)
+  // 메시지 변경 시 스크롤 처리
   useEffect(() => {
     const currentMessageCount = messages.length;
     const previousMessageCount = prevMessagesLengthRef.current;
     
     if (currentMessageCount > previousMessageCount) {
       const newMessagesCount = currentMessageCount - previousMessageCount;
-      console.log('📨 New messages added:', {
-        newCount: newMessagesCount,
-        totalMessages: currentMessageCount,
-        isAtBottom,
-        shouldAutoScroll: isAtBottom
-      });
       
       if (isAtBottom) {
-        // 사용자가 하단에 있으면 자동 스크롤 (지연 시간 단축)
         requestAnimationFrame(() => {
           setTimeout(() => scrollToBottom(false), 50);
         });
       } else {
-        // 사용자가 위에서 스크롤 중이면 읽지 않은 메시지 카운트 증가
-        setUnreadCount(prev => {
-          const newCount = prev + newMessagesCount;
-          console.log('📊 Unread count updated:', { previous: prev, added: newMessagesCount, new: newCount });
-          return newCount;
-        });
+        setUnreadCount(prev => prev + newMessagesCount);
       }
     }
     
-    // 초기 로드 시 자동 스크롤
     if (previousMessageCount === 0 && currentMessageCount > 0) {
-      console.log('📜 Initial messages loaded, scrolling to bottom');
       setTimeout(() => scrollToBottom(true), 200);
     }
     
     prevMessagesLengthRef.current = currentMessageCount;
   }, [messages, isAtBottom, scrollToBottom]);
 
-  // 스크롤 이벤트 등록 (개선됨)
+  // 스크롤 이벤트 등록
   useEffect(() => {
     const container = messagesContainerRef.current;
-    if (!container) {
-      console.log('📜 Container not ready for scroll event registration');
-      return;
-    }
+    if (!container) return;
     
-    console.log('📜 Registering scroll event listener');
-    
-    // 스크롤 이벤트 등록 (passive로 성능 최적화)
     container.addEventListener('scroll', handleScroll, { passive: true });
     
-    // 초기 스크롤 상태 확인 (약간의 지연 후)
     setTimeout(() => {
       handleScroll();
     }, 100);
     
     return () => {
-      console.log('📜 Removing scroll event listener');
       container.removeEventListener('scroll', handleScroll);
     };
   }, [handleScroll]);
 
-  // 키보드 단축키 (End: 맨 아래로, Home: 맨 위로)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target && (e.target as HTMLElement).tagName === 'INPUT') {
-        // 입력 필드에서는 키보드 단축키 무시
-        return;
-      }
-      
-      if (e.key === 'End') {
-        e.preventDefault();
-        scrollToBottom(true);
-      } else if (e.key === 'Home') {
-        e.preventDefault();
-        const container = messagesContainerRef.current;
-        if (container) {
-          container.scrollTo({ top: 0, behavior: 'smooth' });
-        }
-      } else if (e.key === 'PageDown') {
-        e.preventDefault();
-        const container = messagesContainerRef.current;
-        if (container) {
-          container.scrollBy({ top: container.clientHeight * 0.8, behavior: 'smooth' });
-        }
-      } else if (e.key === 'PageUp') {
-        e.preventDefault();
-        const container = messagesContainerRef.current;
-        if (container) {
-          container.scrollBy({ top: -container.clientHeight * 0.8, behavior: 'smooth' });
-        }
-      }
-    };
-    
-    window.addEventListener('keydown', handleKeyDown);
-    
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [scrollToBottom]);
 
   useEffect(() => {
-    console.log('🏠 joinChat useEffect triggered:', {
-      isConnected,
-      hasJoined: hasJoinedRef.current,
-      isUnmounting: isUnmountingRef.current,
-      currentUserId: currentUser.id,
-      shouldJoin: isConnected && !hasJoinedRef.current && !isUnmountingRef.current
-    });
-    
     if (isConnected && !hasJoinedRef.current && !isUnmountingRef.current) {
       const attemptJoin = async () => {
         try {
-          console.log('🚀 Attempting to join chat with user:', currentUser);
           hasJoinedRef.current = true;
           await joinChat(currentUser);
-          console.log('✅ Successfully joined chat');
         } catch (error) {
-          console.error('❌ Failed to join chat:', error);
+          console.error('Failed to join chat:', error);
           hasJoinedRef.current = false;
           
-          // 3초 후 재시도
           setTimeout(() => {
             if (isConnected && !hasJoinedRef.current && !isUnmountingRef.current) {
-              console.log('🔄 Retrying to join chat...');
               attemptJoin();
             }
           }, 3000);
@@ -312,24 +203,13 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
         return;
       }
 
-      // 연결되고 채팅방에 입장한 후 3초 뒤에 알림 권한 요청
       if (isConnected && hasJoinedRef.current) {
         setTimeout(async () => {
           try {
-            console.log('🔔 자동으로 알림 권한 요청 시작...');
             const granted = await requestNotificationPermission();
-            
-            // 권한 요청 완료 표시 (결과에 관계없이)
             localStorage.setItem('notificationPermissionRequested', 'true');
-            
-            if (granted) {
-              console.log('✅ 알림 권한이 자동으로 허용되었습니다!');
-              // 환영 알림은 제거 - 채팅 중에는 불필요
-            } else {
-              console.log('⚠️ 알림 권한이 거부되었거나 지원되지 않습니다. 수동으로 설정할 수 있습니다.');
-            }
           } catch (error) {
-            console.error('❌ 자동 알림 권한 요청 실패:', error);
+            console.error('Failed to request notification permission:', error);
             localStorage.setItem('notificationPermissionRequested', 'true');
           }
         }, 3000);
@@ -369,123 +249,42 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
     setIsSending(true);
     
     try {
-      console.log('🚀 Sending message:', newMessage.trim());
-      console.log('👤 Current user:', currentUser);
-      console.log('🔗 Is connected:', isConnected);
-      
-      // 타이핑 중지
       stopTyping(currentUser);
-      
       await sendMessage(newMessage.trim(), currentUser);
       setNewMessage('');
-      console.log('✅ Message sent successfully');
     } catch (error) {
-        console.error('❌ Failed to send message:', error);
+        console.error('Failed to send message:', error);
         
-        // 에러를 디버깅 서버로 전송
-        if (error instanceof Error) {
-          fetch('/api/debug/error', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              id: `send-error-${Date.now()}`,
-              timestamp: new Date().toISOString(),
-              level: 'error',
-              message: `Message send failed: ${error.message}`,
-              data: {
-                errorName: error.name,
-                errorStack: error.stack,
-                messageLength: newMessage.trim().length,
-                isConnected,
-                connectionStatus,
-                currentUser: currentUser.id,
-                userAgent: navigator.userAgent
-              },
-              userAgent: navigator.userAgent,
-              url: window.location.href
-            })
-          }).catch(console.error);
-        }
-        
-        // 모바일 환경 감지
-        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-        
-        // 어린이 친화적 에러 메시지 표시
-        let errorMessage = '😅 메시지가 전달되지 않았어요! 다시 해볼까요?';
-        let isRetryable = true;
-        
-        if (error instanceof Error) {
-          const errorMsg = error.message.toLowerCase();
-          
-          if (errorMsg.includes('모바일 네트워크') || errorMsg.includes('timeout')) {
-            errorMessage = isMobile 
-              ? '📱 인터넷이 느려요! WiFi를 확인해주세요 🌐' 
-              : '🌐 인터넷이 느려요! 다시 해볼까요? ✨';
-            isRetryable = true;
-          } else if (errorMsg.includes('not connected') || errorMsg.includes('연결이 끊어졌')) {
-            errorMessage = '🔄 잠깐만 기다려주세요! 다시 연결하고 있어요 ⏱️';
-            isRetryable = true;
-          } else if (errorMsg.includes('too long') || errorMsg.includes('maximum')) {
-            errorMessage = '📏 메시지가 너무 길어요! 짧게 써주세요 ✂️';
-            isRetryable = false;
-          } else if (errorMsg.includes('invalid')) {
-            errorMessage = '🤔 뭔가 이상해요! 새로고침을 해주세요 🔄';
-            isRetryable = false;
-          } else if (errorMsg.includes('server error') || errorMsg.includes('서버 오류')) {
-            errorMessage = '🛠️ 컴퓨터가 잠깐 쉬고 있어요! 조금만 기다려주세요 ⏰';
-            isRetryable = true;
-          } else if (errorMsg.includes('500') || errorMsg.includes('503')) {
-            errorMessage = '😴 서버가 잠깐 자고 있어요! 조금 후에 다시 해보세요 💤';
-            isRetryable = true;
-          }
-        }
-        
-        // 임시 에러 메시지 표시 (모바일 친화적 스타일)
+        // 간단한 에러 토스트
         const errorDiv = document.createElement('div');
         errorDiv.innerHTML = `
           <div style="
             position: fixed; 
-            top: ${isMobile ? '80px' : '20px'}; 
+            top: 80px; 
             left: 50%; 
             transform: translateX(-50%);
-            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            background: #ef4444;
             color: white; 
-            padding: ${isMobile ? '16px 24px' : '12px 20px'}; 
-            border-radius: ${isMobile ? '16px' : '8px'}; 
-            box-shadow: 0 8px 32px rgba(239, 68, 68, 0.4);
+            padding: 12px 20px; 
+            border-radius: 12px; 
+            box-shadow: 0 4px 16px rgba(239, 68, 68, 0.4);
             z-index: 999999;
-            max-width: ${isMobile ? '95%' : '90%'};
+            max-width: 90%;
             text-align: center;
             font-weight: 500;
-            font-size: ${isMobile ? '16px' : '14px'};
-            animation: slideInDown 0.3s ease-out;
+            font-size: 14px;
           ">
-            ${errorMessage}
-            ${isRetryable ? '<br><small style=\"opacity: 0.8; margin-top: 4px; display: inline-block;\">💡 다시 시도하거나 새로고침해보세요</small>' : ''}
+            😅 메시지 전송에 실패했어요! 다시 시도해주세요
           </div>
         `;
         
         document.body.appendChild(errorDiv);
         
-        // 모바일에서는 더 오래 표시 (읽을 시간 확보)
-        const displayTime = isMobile ? 7000 : 5000;
         setTimeout(() => {
           if (errorDiv.parentNode) {
-            errorDiv.style.animation = 'slideOutUp 0.3s ease-in';
-            setTimeout(() => {
-              if (errorDiv.parentNode) {
-                errorDiv.parentNode.removeChild(errorDiv);
-              }
-            }, 300);
+            errorDiv.parentNode.removeChild(errorDiv);
           }
-        }, displayTime);
-        
-        // 재시도 가능한 에러인 경우 자동 재연결 시도
-        if (isRetryable && errorMessage.includes('연결')) {
-          setTimeout(() => {
-            reconnect();
-          }, 2000);
-        }
+        }, 3000);
     } finally {
       setIsSending(false);
     }
@@ -626,28 +425,9 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
 
   const connectionDisplay = getConnectionDisplay();
 
-  // 연결 상태 디버깅 (개발 환경에서만)
-  useEffect(() => {
-    if (process.env.NODE_ENV === 'development') {
-      console.log('🔗 Connection state update:', {
-        isConnected,
-        connectionStatus,
-        currentTransport: getCurrentTransport(),
-        connectionState: getConnectionState(),
-        displayText: connectionDisplay.text,
-        displayIcon: connectionDisplay.icon,
-        timestamp: new Date().toLocaleTimeString()
-      });
-    }
-  }, [isConnected, connectionStatus, connectionDisplay, getCurrentTransport, getConnectionState]);
 
   return (
     <>
-      {/* 백그라운드 상태 디버그 컴포넌트 */}
-      <BackgroundStateDebug 
-        show={process.env.NODE_ENV === 'development'} 
-        position="bottom-left" 
-      />
       
       <div 
         className={`flex mobile-chat-container lg:max-w-7xl lg:mx-auto lg:my-4 lg:rounded-3xl lg:shadow-2xl bg-gradient-to-br from-pink-200 via-purple-200 to-indigo-300 relative overflow-hidden lg:h-[calc(100vh-2rem)] ${calmMode ? 'calm-mode' : ''}`}
@@ -708,35 +488,6 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
         />
       )}
 
-      {/* 모바일 전용 플로팅 사이드바 토글 버튼들 - 향상된 UX */}
-      <div className="md:hidden">
-        {!showSidebar && (
-          <>
-            {/* 상단 플로팅 버튼 - 향상된 접근성 */}
-            <button
-              onClick={toggleSidebar}
-              className="fixed top-20 left-4 z-30 mobile-touch-target p-4 bg-gradient-to-r from-pink-400 to-purple-500 text-white rounded-full shadow-2xl hover:from-pink-500 hover:to-purple-600 transition-all duration-300 transform hover:scale-110 animate-pulse active:scale-95 focus:ring-4 focus:ring-pink-300"
-              style={{
-                top: 'max(5rem, calc(env(safe-area-inset-top) + 1rem))',
-                left: 'max(1rem, env(safe-area-inset-left))'
-              }}
-              aria-label="친구 목록 열기"
-            >
-              <span className="text-lg">👥</span>
-            </button>
-
-            {/* 사이드 엣지 스와이프 인디케이터 */}
-            <div className="fixed left-0 top-1/2 -translate-y-1/2 z-30">
-              <div className="w-1 h-16 bg-gradient-to-b from-pink-400 to-purple-500 rounded-r-full animate-pulse opacity-70" />
-              <div className="absolute -right-2 top-1/2 -translate-y-1/2 text-xs rotate-90 text-pink-500 font-bold">
-                ←
-              </div>
-            </div>
-
-
-          </>
-        )}
-      </div>
 
       {/* 사이드바 - 접속자 정보 (반응형 개선) */}
       <div 
@@ -909,17 +660,6 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3 min-w-0 flex-1">
-                          {/* 모바일 메뉴 버튼 - 향상된 UX */}
-            <button
-              onClick={toggleSidebar}
-              className="md:hidden mobile-touch-target p-3 text-pink-600 hover:text-pink-800 rounded-2xl hover:bg-pink-200 transition-all transform hover:scale-110 active:scale-95 focus:ring-4 focus:ring-pink-300 relative"
-              aria-label={showSidebar ? '친구 목록 닫기' : '친구 목록 열기'}
-            >
-              <div className="text-2xl">
-                👥
-              </div>
-            </button>
-              
               <div className="relative">
                 <Image
                   src={currentUser.avatar}
@@ -1089,19 +829,6 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
           </div>
         )}
 
-        {/* 스크롤 가이드 표시 */}
-        {!isAtBottom && messages.length > 5 && (
-          <div className="flex-shrink-0 scroll-guide bg-gradient-to-r from-blue-100 to-purple-100 p-3 text-center border-t-2 border-blue-200 shadow-inner">
-            <p className="text-sm text-purple-700 font-medium flex items-center justify-center space-x-2 mb-1">
-              <span className="animate-bounce">📜</span>
-              <span>기존 메시지를 보고 있습니다. 아래 버튼을 눌러 최신 메시지로 이동하세요.</span>
-              <span className="animate-pulse">✨</span>
-            </p>
-            <div className="hidden md:block text-xs text-purple-500 mt-2 opacity-75">
-              💡 키보드 단축키: End(최신), Home(처음), Page Up/Down(스크롤)
-            </div>
-          </div>
-        )}
         
         {/* 메시지 입력 - 반응형 개선 */}
         <div 
@@ -1112,38 +839,10 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
             paddingRight: 'max(0.75rem, env(safe-area-inset-right))'
           }}
         >
-          {/* Character counter with fun visual */}
-          {newMessage.trim().length > 0 && (
-            <div className="mb-2 flex items-center justify-between">
-              <div className="text-xs text-purple-600 font-medium">
-                {newMessage.length >= 80 && newMessage.length < 95 && (
-                  <span className="text-orange-600">⚠️ 거의 다 찼어요! ({100 - newMessage.length}글자 남음)</span>
-                )}
-                {newMessage.length >= 95 && (
-                  <span className="text-red-600 animate-pulse">🚨 거의 끝이에요! ({100 - newMessage.length}글자 남음)</span>
-                )}
-                {newMessage.length < 80 && (
-                  <span className="text-green-600">✨ 좋아요! ({newMessage.length}/100글자)</span>
-                )}
-              </div>
-              <div className="flex items-center">
-                {/* Fun progress bar with emojis */}
-                <div className="w-20 bg-gray-200 rounded-full h-2 overflow-hidden">
-                  <div 
-                    className={`h-2 rounded-full transition-all duration-300 ${
-                      newMessage.length < 50 ? 'bg-green-400' :
-                      newMessage.length < 80 ? 'bg-yellow-400' :
-                      newMessage.length < 95 ? 'bg-orange-400' : 'bg-red-400'
-                    }`}
-                    style={{ width: `${(newMessage.length / 100) * 100}%` }}
-                  />
-                </div>
-                <span className="ml-2 text-xs">
-                  {newMessage.length < 50 ? '🌱' : 
-                   newMessage.length < 80 ? '🌿' : 
-                   newMessage.length < 95 ? '🌳' : '🔥'}
-                </span>
-              </div>
+          {/* 간단한 글자수 표시 */}
+          {newMessage.length > 70 && (
+            <div className="mb-2 text-xs text-purple-600 text-center">
+              {100 - newMessage.length}글자 남음 ✨
             </div>
           )}
           <form onSubmit={handleSendMessage} className="flex space-x-2 md:space-x-3 lg:space-x-4">
@@ -1162,44 +861,19 @@ export default function ChatRoom({ currentUser, onLogout }: ChatRoomProps) {
               onChange={(e) => {
                 const newValue = e.target.value;
                 const hasContent = newValue.trim().length > 0;
-                const previousContent = newMessage.trim().length > 0;
                 
-                console.log('📝 Input onChange:', {
-                  newValue: newValue,
-                  trimmedLength: newValue.trim().length,
-                  isConnected,
-                  previousValue: newMessage,
-                  hasContent,
-                  previousContent,
-                  shouldStartTyping: hasContent && isConnected,
-                  shouldStopTyping: !hasContent && previousContent
-                });
-
                 setNewMessage(newValue);
                 
-                // 메시지 입력 시 자동으로 하단으로 스크롤 (사용자가 입력할 때만)
                 if (hasContent && !isAtBottom && messages.length > 0) {
-                  console.log('📝 User started typing, scrolling to bottom');
                   requestAnimationFrame(() => {
                     scrollToBottom(true);
                   });
                 }
                 
-                // 타이핑 시작 (메시지가 있을 때만)
                 if (hasContent && isConnected) {
-                  console.log('⌨️ Starting typing due to input change');
-                  startTyping(currentUser).then(() => {
-                    console.log('✅ startTyping completed');
-                  }).catch((error) => {
-                    console.error('❌ startTyping failed:', error);
-                  });
+                  startTyping(currentUser);
                 } else if (!hasContent) {
-                  console.log('⌨️ Stopping typing due to empty input');
-                  stopTyping(currentUser).then(() => {
-                    console.log('✅ stopTyping completed');
-                  }).catch((error) => {
-                    console.error('❌ stopTyping failed:', error);
-                  });
+                  stopTyping(currentUser);
                 }
               }}
               onKeyPress={handleKeyPress}
